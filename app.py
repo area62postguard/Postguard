@@ -36,9 +36,7 @@ def init():
     CREATE TABLE IF NOT EXISTS sources(id INTEGER PRIMARY KEY,name TEXT,kind TEXT,status TEXT,notes TEXT,created_at TEXT);
     CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,user_id INTEGER,action TEXT,detail TEXT,created_at TEXT);
     """)
-    if not c.execute("SELECT 1 FROM users LIMIT 1").fetchone():
-        c.execute("INSERT INTO users(email,password,role,created_at) VALUES(?,?,?,?)",("demo@postguard.local",generate_password_hash("ChangeMe123!"),"admin",datetime.utcnow().isoformat()))
-    if not c.execute("SELECT 1 FROM principals LIMIT 1").fetchone():
+
         c.executemany("INSERT INTO principals(name,role,risk,created_at) VALUES(?,?,?,?)",[
             ("Alex Morgan","Professional Footballer",63,datetime.utcnow().isoformat()),
             ("Jordan Lee","Executive",41,datetime.utcnow().isoformat())])
