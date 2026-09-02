@@ -24,6 +24,14 @@ app.config.update(
 )
 
 def db():
+    database_url = os.getenv("DATABASE_URL")
+
+    if database_url:
+        return psycopg.connect(
+            database_url,
+            row_factory=dict_row
+        )
+
     c = sqlite3.connect(DB)
     c.row_factory = sqlite3.Row
     return c
