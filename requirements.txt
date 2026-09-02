@@ -3,3 +3,4 @@ Flask-WTF==1.2.2
 Flask-Limiter==3.12
 gunicorn==23.0.0
 Pillow==11.3.0
+psycopg[binary]==3.2.10
