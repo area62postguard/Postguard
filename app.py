@@ -79,7 +79,54 @@ def image_scan(path):
 
 def risk(score):
     return "CRITICAL" if score>=80 else "HIGH" if score>=60 else "MODERATE" if score>=40 else "LOW"
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+        confirm = request.form.get("confirm", "")
 
+        if not email or not password:
+            flash("Email and password are required.")
+            return render_template("register.html")
+
+        if password != confirm:
+            flash("Passwords do not match.")
+            return render_template("register.html")
+
+        if len(password) < 10:
+            flash("Password must be at least 10 characters.")
+            return render_template("register.html")
+
+        c = db()
+
+        existing = c.execute(
+            "SELECT id FROM users WHERE email=?",
+            (email,)
+        ).fetchone()
+
+        if existing:
+            c.close()
+            flash("An account with that email already exists.")
+            return render_template("register.html")
+
+        c.execute(
+            "INSERT INTO users(email,password,role,created_at) VALUES(?,?,?,?)",
+            (
+                email,
+                generate_password_hash(password),
+                "admin",
+                datetime.utcnow().isoformat()
+            )
+        )
+
+        c.commit()
+        c.close()
+
+        flash("Account created. You can now sign in.")
+        return redirect(url_for("login"))
+
+    return render_template("register.html")
 @app.route("/login",methods=["GET","POST"])
 def login():
     if request.method=="POST":
