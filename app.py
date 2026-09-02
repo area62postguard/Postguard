@@ -161,16 +161,7 @@ def login():
         flash("Invalid credentials.")
 
     return render_template("login.html")
-def login():
-    if request.method=="POST":
-        e=request.form.get("email","").strip().lower();p=request.form.get("password","");c=db();u=c.execute("SELECT * FROM users WHERE email=?",(e,)).fetchone();c.close()
-       if u and check_password_hash(u["password"], p):
-    session.clear()
-    session["uid"] = u["id"]
-    session["email"] = e
-    return redirect("/")
-        flash("Invalid credentials.")
-    return render_template("login.html")
+    
 @app.post("/logout")
 @auth
 def logout():
