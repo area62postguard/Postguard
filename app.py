@@ -37,7 +37,8 @@ def db():
     return c
 
 def init():
-        c = db()c.executescript("""
+       c = db()
+    c.executescript("""
     CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY,email TEXT UNIQUE,password TEXT,role TEXT,created_at TEXT);
     CREATE TABLE IF NOT EXISTS principals(id INTEGER PRIMARY KEY,name TEXT,role TEXT,risk INTEGER DEFAULT 0,created_at TEXT);
     CREATE TABLE IF NOT EXISTS checks(id INTEGER PRIMARY KEY,principal_id INTEGER,filename TEXT,score INTEGER,risk TEXT,findings TEXT,created_at TEXT);
