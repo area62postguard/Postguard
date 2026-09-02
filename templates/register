@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>PostGuard — Create account</title>
+    <link rel="stylesheet" href="/static/login.css">
+</head>
+
+<body>
+<div class="box">
+
+    <div class="brand">POST<span>GUARD</span></div>
+
+    <h2>Create Account</h2>
+    <p>Create secure access to your PostGuard workspace.</p>
+
+    {% for x in get_flashed_messages() %}
+        <div class="err">{{ x }}</div>
+    {% endfor %}
+
+    <form method="post">
+
+        <label>Email</label>
+        <input
+            name="email"
+            type="email"
+            autocomplete="email"
+            placeholder="you@example.com"
+            required
+        >
+
+        <label>Password</label>
+        <input
+            name="password"
+            type="password"
+            autocomplete="new-password"
+            placeholder="Minimum 10 characters"
+            minlength="10"
+            required
+        >
+
+        <label>Confirm password</label>
+        <input
+            name="confirm"
+            type="password"
+            autocomplete="new-password"
+            placeholder="Repeat your password"
+            minlength="10"
+            required
+        >
+
+        <button type="submit">Create account</button>
+
+    </form>
+
+    <div style="margin-top:20px;text-align:center">
+        <a href="/login">Already have an account? Sign in</a>
+    </div>
+
+</div>
+</body>
+</html>
