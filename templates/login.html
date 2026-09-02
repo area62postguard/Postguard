@@ -1,1 +1,50 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PostGuard</title><link rel="stylesheet" href="/static/login.css"></head><body><div class="box"><div class="brand">POST<span>GUARD</span></div><h2>Intelligence Centre</h2><p>Sign in to the local development environment.</p>{% for x in get_flashed_messages() %}<div class="err">{{x}}</div>{% endfor %}<form method="post"><label>Email</label><input name="email" value="demo@postguard.local" required><label>Password</label><input name="password" value="ChangeMe123!" type="password" required><button>Sign in</button></form><small>Demo credentials only. Change them before deployment.</small></div></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>PostGuard — Sign in</title>
+    <link rel="stylesheet" href="/static/login.css">
+</head>
+
+<body>
+<div class="box">
+
+    <div class="brand">POST<span>GUARD</span></div>
+
+    <h2>Intelligence Centre</h2>
+    <p>Secure access to your PostGuard workspace.</p>
+
+    {% for x in get_flashed_messages() %}
+        <div class="err">{{ x }}</div>
+    {% endfor %}
+
+    <form method="post">
+        <label>Email</label>
+        <input
+            name="email"
+            type="email"
+            autocomplete="username"
+            placeholder="you@example.com"
+            required
+        >
+
+        <label>Password</label>
+        <input
+            name="password"
+            type="password"
+            autocomplete="current-password"
+            placeholder="Enter your password"
+            required
+        >
+
+        <button type="submit">Sign in</button>
+    </form>
+
+    <div style="margin-top:20px;text-align:center">
+        <a href="/register">Create a PostGuard account</a>
+    </div>
+
+</div>
+</body>
+</html>
