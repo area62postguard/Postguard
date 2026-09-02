@@ -37,9 +37,14 @@ def init():
     CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,user_id INTEGER,action TEXT,detail TEXT,created_at TEXT);
     """)
 
-        c.executemany("INSERT INTO principals(name,role,risk,created_at) VALUES(?,?,?,?)",[
-            ("Alex Morgan","Professional Footballer",63,datetime.utcnow().isoformat()),
-            ("Jordan Lee","Executive",41,datetime.utcnow().isoformat())])
+    if not c.execute("SELECT 1 FROM principals LIMIT 1").fetchone():
+        c.executemany(
+            "INSERT INTO principals(name,role,risk,created_at) VALUES(?,?,?,?)",
+            [
+                ("Alex Morgan", "Professional Footballer", 63, datetime.utcnow().isoformat()),
+                ("Jordan Lee", "Executive", 41, datetime.utcnow().isoformat())
+            ]
+        )
     if not c.execute("SELECT 1 FROM sources LIMIT 1").fetchone():
         c.executemany("INSERT INTO sources(name,kind,status,notes,created_at) VALUES(?,?,?,?,?)",[
             ("Client public profile feed","Authorised social source","Demo","Connector placeholder — no credentials stored.",datetime.utcnow().isoformat()),
