@@ -777,6 +777,17 @@ def scan():
 
         uploaded_file.save(path)
 
+        try:
+            with Image.open(path) as img:
+                img.verify()
+        except Exception:
+            if os.path.exists(path):
+                os.remove(path)
+
+            return jsonify(
+                error="Uploaded file is not a valid image."
+            ), 400
+
         image_findings, metadata = image_scan(
             path
         )
