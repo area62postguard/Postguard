@@ -1,5 +1,7 @@
 
 import os,re,json,secrets,sqlite3
+import psycopg
+from psycopg.rows import dict_row
 from datetime import datetime
 from functools import wraps
 from flask import Flask,render_template,request,redirect,url_for,session,jsonify,flash
