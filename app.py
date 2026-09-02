@@ -6,7 +6,8 @@ import sqlite3
 
 import psycopg
 from psycopg.rows import dict_row
-
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from datetime import datetime, timezone
 from functools import wraps
 
@@ -38,6 +39,12 @@ os.makedirs(UP, exist_ok=True)
 
 app = Flask(__name__)
 csrf = CSRFProtect(app)
+
+limiter = Limiter(
+    key_func=get_remote_address,
+    app=app,
+    default_limits=[]
+)
 
 app.secret_key = os.getenv(
 
@@ -595,6 +602,7 @@ def register():
 # ============================================================
 
 @app.route("/login", methods=["GET", "POST"])
+@limiter.limit("5 per minute", methods=["POST"])
 def login():
     if request.method == "POST":
         email = request.form.get(
