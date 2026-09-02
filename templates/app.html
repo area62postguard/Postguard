@@ -1,7 +1,11 @@
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PostGuard Intelligence</title><link rel="stylesheet" href="/static/app.css"></head><body>
 <aside><div class="brand">POST<span>GUARD</span></div><div class="nav">
 <a class="active" onclick="show('dashboard',this)">Dashboard</a><a onclick="show('scanner',this)">AI Post Scanner</a><a onclick="show('alerts',this)">Alerts</a><a onclick="show('cases',this)">Cases</a><a onclick="show('people',this)">Principals</a><a onclick="show('monitoring',this)">Monitoring</a><a onclick="show('audit',this)">Audit Log</a></div></aside>
-<main><header class="top"><b id="crumb">PostGuard Intelligence Centre</b><a href="/logout">Sign out · {{session.email}}</a></header><div class="wrap">
+<main><header class="top"><b id="crumb">PostGuard Intelligence Centre</b><form method="post" action="/logout" style="display:inline">
+    <button type="submit" class="logout-link">
+        Sign out · {{ session.email }}
+    </button>
+</form></header><div class="wrap">
 <section id="dashboard" class="page active"><div class="heading"><div><h1>PostGuard Intelligence Centre</h1><p>Pre-publication protection and authorised monitoring.</p></div><button class="btn" onclick="show('scanner')">Scan a Post</button></div>
 <div class="grid"><div class="card"><div class="muted">Open alerts</div><div class="metric red">{{stats.alerts}}</div><div class="muted">Priority review</div></div><div class="card"><div class="muted">Open cases</div><div class="metric">{{stats.cases}}</div><div class="muted">Response workflow</div></div><div class="card"><div class="muted">Posts scanned</div><div class="metric">{{stats.checks}}</div><div class="muted">This installation</div></div><div class="card"><div class="muted">Protected principals</div><div class="metric">{{stats.principals}}</div><div class="muted">Active profiles</div></div></div>
 <div class="layout"><div class="card"><h3>How the intelligence engine works</h3><div class="flow"><span>IMAGE</span><i>→</i><span>METADATA</span><i>→</i><span>VISION/OCR*</span><i>→</i><span>CAPTION</span><i>→</i><span>RISK</span></div><p class="muted">*The current build has an offline metadata layer and a clearly separated hook for a production vision/OCR provider.</p></div>
