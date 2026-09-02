@@ -23,18 +23,6 @@ app.config.update(
     SESSION_COOKIE_SAMESITE="Lax"
 )
 
-def db():
-    database_url = os.getenv("DATABASE_URL")
-
-    if database_url:
-        return psycopg.connect(
-            database_url,
-            row_factory=dict_row
-        )
-
-    c = sqlite3.connect(DB)
-    c.row_factory = sqlite3.Row
-    return c
 def init():
     c=db();c.executescript("""
     CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY,email TEXT UNIQUE,password TEXT,role TEXT,created_at TEXT);
