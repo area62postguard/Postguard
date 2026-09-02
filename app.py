@@ -900,6 +900,41 @@ def scan():
         ),
     )
 
+    if risk_level in ("HIGH", "CRITICAL"):
+        top_finding = findings[0] if findings else {
+            "category": "High-risk post",
+            "detail": "The post exceeded the configured PostGuard risk threshold.",
+            "recommendation": "Review and remove sensitive details before publishing.",
+        }
+
+        c.execute(
+            """
+            INSERT INTO alerts(
+                principal_id,
+                severity,
+                category,
+                detail,
+                recommendation,
+                created_at
+            )
+            VALUES(?,?,?,?,?,?)
+            """,
+            (
+                principal_id,
+                risk_level,
+                top_finding.get("category", "High-risk post"),
+                top_finding.get(
+                    "detail",
+                    "The post exceeded the configured PostGuard risk threshold.",
+                ),
+                top_finding.get(
+                    "recommendation",
+                    "Review and remove sensitive details before publishing.",
+                ),
+                now(),
+            ),
+        )
+
     c.commit()
     c.close()
 
