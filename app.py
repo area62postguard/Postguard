@@ -108,6 +108,13 @@ def risk(score):
     return "CRITICAL" if score>=80 else "HIGH" if score>=60 else "MODERATE" if score>=40 else "LOW"
 @app.route("/register", methods=["GET", "POST"])
 def register():
+        c = db()
+    user_exists = c.execute("SELECT id FROM users LIMIT 1").fetchone()
+    c.close()
+    if user_exists:
+        flash("Registration is closed.")
+                return redirect(url_for("login"))
+
     if request.method == "POST":
         email = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
