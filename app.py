@@ -8,7 +8,19 @@ from PIL import Image,ImageDraw,ImageFilter,ExifTags
 
 BASE=os.path.dirname(os.path.abspath(__file__)); DB=os.path.join(BASE,"data","postguard.db"); UP=os.path.join(BASE,"data","uploads")
 os.makedirs(UP,exist_ok=True)
-app=Flask(__name__); app.secret_key=os.getenv("POSTGUARD_SECRET",secrets.token_hex(32)); app.config["MAX_CONTENT_LENGTH"]=20*1024*1024
+app = Flask(__name__)
+
+app.secret_key = os.getenv(
+    "POSTGUARD_SECRET",
+    secrets.token_hex(32)
+)
+
+app.config.update(
+    MAX_CONTENT_LENGTH=20 * 1024 * 1024,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_SAMESITE="Lax"
+)
 
 def db():
     c=sqlite3.connect(DB);c.row_factory=sqlite3.Row;return c
@@ -134,8 +146,11 @@ def login():
         if u and check_password_hash(u["password"],p):session["uid"]=u["id"];session["email"]=e;return redirect("/")
         flash("Invalid credentials.")
     return render_template("login.html")
-@app.get("/logout")
-def logout():session.clear();return redirect(url_for("login"))
+@app.post("/logout")
+@auth
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
 
 @app.get("/")
 @auth
