@@ -144,4 +144,10 @@ def audit_api():
 @app.get("/health")
 def health():return jsonify(status="ok",service="postguard",version="4.0")
 
-if __name__=="__main__":init();app.run(host=os.getenv("HOST","127.0.0.1"),port=int(os.getenv("PORT","5000")))
+init()
+
+if __name__ == "__main__":
+    app.run(
+        host=os.getenv("HOST", "127.0.0.1"),
+        port=int(os.getenv("PORT", "5000"))
+    )
