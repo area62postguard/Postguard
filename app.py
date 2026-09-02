@@ -20,9 +20,9 @@ from flask import (
     jsonify,
     flash,
 )
-
 from werkzeug.security import generate_password_hash, check_password_hash
 from PIL import Image, ExifTags
+from flask_wtf.csrf import CSRFProtect
 
 
 # ============================================================
@@ -37,8 +37,10 @@ UP = os.path.join(DATA, "uploads")
 os.makedirs(UP, exist_ok=True)
 
 app = Flask(__name__)
+csrf = CSRFProtect(app)
 
 app.secret_key = os.getenv(
+
     "POSTGUARD_SECRET",
     secrets.token_hex(32),
 )
