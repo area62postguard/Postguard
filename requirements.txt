@@ -1,3 +1,5 @@
-Flask>=3.0,<4
-Pillow>=10.0
-Werkzeug>=3.0
+Flask==3.1.2
+Flask-WTF==1.2.2
+Flask-Limiter==3.12
+gunicorn==23.0.0
+Pillow==11.3.0
