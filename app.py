@@ -843,6 +843,12 @@ def scan():
         f"{risk_level} {score}",
     )
 
+    if filename:
+        saved_path = os.path.join(UP, filename)
+
+        if os.path.exists(saved_path):
+            os.remove(saved_path)
+
     return jsonify(
         score=score,
         risk=risk_level,
