@@ -1185,6 +1185,10 @@ tr:last-child td{border-bottom:0}
         <a href="{{ url_for('home') }}#active-alerts">Alerts</a>
         <a href="{{ url_for('home') }}#recent-cases">Cases</a>
         <a href="{{ url_for('account') }}">My Account</a>
+        <form method="post" action="{{ url_for('logout') }}" style="margin:8px 0 0">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" style="width:100%;padding:11px 12px;border-radius:10px;border:1px solid #31415e;background:#151f33;color:#fff;cursor:pointer;text-align:left">Log out</button>
+        </form>
     </nav>
 </aside>
 
@@ -1198,6 +1202,10 @@ tr:last-child td{border-bottom:0}
         <div class="actions">
             <a class="btn" href="{{ url_for('account') }}">My Account</a>
             <a class="btn primary" href="{{ url_for('check_post') }}">Check a Post</a>
+            <form method="post" action="{{ url_for('logout') }}" style="margin:0">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn" type="submit">Log out</button>
+            </form>
         </div>
     </div>
 
@@ -1669,6 +1677,10 @@ textarea.field{min-height:180px;resize:vertical}
         <a href="{{ url_for('home') }}">Dashboard</a>
         <a class="active" href="{{ url_for('check_post') }}">Check a Post</a>
         <a href="{{ url_for('account') }}">My Account</a>
+        <form method="post" action="{{ url_for('logout') }}" style="margin:8px 0 0">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" style="width:100%;padding:11px 12px;border-radius:10px;border:1px solid #31415e;background:#151f33;color:#fff;cursor:pointer;text-align:left">Log out</button>
+        </form>
     </nav>
 </aside>
 
@@ -1679,7 +1691,13 @@ textarea.field{min-height:180px;resize:vertical}
             <h1>Check a Post</h1>
             <div class="muted">Scan your proposed caption and image before publishing.</div>
         </div>
-        <a class="btn secondary" href="{{ url_for('home') }}">Back to Dashboard</a>
+        <div class="actions">
+            <a class="btn secondary" href="{{ url_for('home') }}">Back to Dashboard</a>
+            <form method="post" action="{{ url_for('logout') }}" style="margin:0">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn secondary" type="submit">Log out</button>
+            </form>
+        </div>
     </div>
 
     <div class="grid">
@@ -1726,8 +1744,8 @@ textarea.field{min-height:180px;resize:vertical}
                 <strong>Safer caption suggestion</strong>
                 <div id="saferCaption" style="margin-top:8px"></div>
                 <div class="actions">
-                    <button type="button" class="btn" id="generateSafer">Generate Safer Caption</button>
-                    <button type="button" class="btn secondary" id="rescanSafer">Re-scan Safer Caption</button>
+                    <button type="button" class="btn" id="generateSafer">Create Safer Post</button>
+                    <button type="button" class="btn secondary" id="rescanSafer">Use & Re-scan Safer Post</button>
                     <button type="button" class="btn secondary" id="copySafer">Copy safer caption</button>
                 </div>
             </div>
@@ -1756,6 +1774,7 @@ const button = document.getElementById("scanButton");
 const originalCheckField = document.getElementById("original_check_id");
 const saferCaptionField = document.getElementById("safer_caption_field");
 let lastCheckId = null;
+let originalRiskyCheckId = null;
 
 imageInput.addEventListener("change", () => {
     const file = imageInput.files && imageInput.files[0];
@@ -1803,6 +1822,15 @@ form.addEventListener("submit", async (event) => {
         riskEl.textContent = data.risk || "UNKNOWN";
 
         const risk = (data.risk || "").toUpperCase();
+
+        if (
+            data.check_id &&
+            (risk === "HIGH" || risk === "CRITICAL" || risk === "MODERATE") &&
+            !originalCheckField.value
+        ) {
+            originalRiskyCheckId = data.check_id;
+        }
+
         riskEl.className = "status " + (
             risk === "LOW" ? "safe" :
             risk === "MODERATE" ? "warn" :
@@ -1842,7 +1870,7 @@ form.addEventListener("submit", async (event) => {
                 </div>
             `).join("");
 
-            saferCaptionEl.textContent = "Click Generate Safer Caption to create a safer version of your post.";
+            saferCaptionEl.textContent = "Click Create Safer Post to generate a safer version of your post.";
             saferBox.style.display = "block";
         }
     } catch (error) {
@@ -1861,62 +1889,66 @@ form.addEventListener("submit", async (event) => {
 });
 
 
-function buildSaferCaption(original) {
-    let safer = (original || "").trim();
+generateSafer.addEventListener("click", async () => {
+    const original = document.getElementById("caption").value.trim();
 
-    const replacements = [
-        [/\b(gate code|entry code|alarm code|passcode|password|pin)\s*(is|:)?\s*[A-Za-z0-9-]+/gi, ""],
-        [/\b(my|our)\s+(home|house|address)\s+(is|at)\s+[^,.!?]+/gi, ""],
-        [/\b(i am at|i'm at|currently at|here at|just arrived at|right now at|live from)\b[^.!?]*/gi, ""],
-        [/\b(address|postcode|post code|house number)\s*(is|:)?\s*[^,.!?]+/gi, ""],
-        [/\b(leaving|flying|travelling|traveling|going)\s+(today|tomorrow|tonight)\b[^.!?]*/gi, ""],
-        [/\b(security|bodyguard|guard|alarm|camera|cctv)\b[^.!?]*/gi, ""]
-    ];
-
-    replacements.forEach(([pattern, replacement]) => {
-        safer = safer.replace(pattern, replacement);
-    });
-
-    safer = safer
-        .replace(/\s{2,}/g, " ")
-        .replace(/\s+([,.!?])/g, "$1")
-        .replace(/^[\s,.;:-]+|[\s,.;:-]+$/g, "")
-        .trim();
-
-    if (!safer || safer.length < 8) {
-        safer = "Sharing an update while keeping private location and security details offline.";
+    if (!original) {
+        saferCaptionEl.textContent = "Enter a caption first.";
+        saferBox.style.display = "block";
+        return;
     }
 
-    return safer;
-}
+    generateSafer.disabled = true;
+    generateSafer.textContent = "Creating safer post...";
 
-generateSafer.addEventListener("click", () => {
-    const original = document.getElementById("caption").value;
-    const safer = buildSaferCaption(original);
+    try {
+        const payload = new FormData();
+        payload.append(
+            "csrf_token",
+            form.querySelector('input[name="csrf_token"]').value
+        );
+        payload.append("caption", original);
 
-    saferCaptionEl.textContent = safer;
-    generateSafer.textContent = "Regenerate Safer Caption";
+        const response = await fetch("/api/safer-caption", {
+            method: "POST",
+            body: payload,
+            credentials: "same-origin"
+        });
 
-    if (safer === original.trim()) {
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || "Could not create a safer post.");
+        }
+
+        saferCaptionEl.textContent = data.safer_caption;
+        saferBox.style.display = "block";
+    } catch (error) {
         saferCaptionEl.textContent =
-            "Sharing an update while keeping private location, security, family and access details offline.";
+            error.message || "Could not create a safer post.";
+        saferBox.style.display = "block";
+    } finally {
+        generateSafer.disabled = false;
+        generateSafer.textContent = "Create Safer Post";
     }
 });
 
 rescanSafer.addEventListener("click", () => {
     const safer = saferCaptionEl.textContent.trim();
 
-    if (!safer || safer.startsWith("Click Generate")) {
+    if (!safer || safer.startsWith("Click Create")) {
         saferCaptionEl.textContent = "Generate a safer caption first.";
         return;
     }
 
-    if (!lastCheckId) {
+    const sourceCheckId = originalRiskyCheckId || lastCheckId;
+
+    if (!sourceCheckId) {
         saferCaptionEl.textContent = "Run the original post through PostGuard first.";
         return;
     }
 
-    originalCheckField.value = String(lastCheckId);
+    originalCheckField.value = String(sourceCheckId);
     saferCaptionField.value = safer;
     document.getElementById("caption").value = safer;
     form.requestSubmit();
@@ -2004,7 +2036,13 @@ a{color:inherit}.main{max-width:1000px;margin:auto;padding:30px 20px}
         <div class="muted">PostGuard scan history</div>
         <h1 style="margin:.2rem 0">Scan #{{ check['id'] }}</h1>
     </div>
-    <a class="btn" href="{{ url_for('home') }}">Back to Dashboard</a>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <a class="btn" href="{{ url_for('home') }}">Back to Dashboard</a>
+        <form method="post" action="{{ url_for('logout') }}" style="margin:0">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn" type="submit">Log out</button>
+        </form>
+    </div>
 </div>
 
 <div class="grid">
@@ -2129,6 +2167,55 @@ def scan_history_detail(check_id):
         check=check,
         findings=findings,
         safer_check=safer_check,
+    )
+
+
+
+def create_safer_caption(caption):
+    """Create a conservative privacy-safe rewrite without external AI."""
+    original = (caption or "").strip()
+    safer = original
+
+    patterns = [
+        (r"\b(gate code|entry code|alarm code|passcode|password|pin)\s*(is|:)?\s*[A-Za-z0-9-]+", ""),
+        (r"\b(my|our)\s+(home|house|address)\s+(is|at)\s+[^,.!?]+", ""),
+        (r"\b(i am at|i'm at|currently at|here at|just arrived at|right now at|live from)\b[^.!?]*", ""),
+        (r"\b(address|postcode|post code|house number)\s*(is|:)?\s*[^,.!?]+", ""),
+        (r"\b(leaving|flying|travelling|traveling|going)\s+(today|tomorrow|tonight)\b[^.!?]*", ""),
+        (r"\b(security|bodyguard|guard|alarm|camera|cctv)\b[^.!?]*", ""),
+    ]
+
+    for pattern, replacement in patterns:
+        safer = re.sub(pattern, replacement, safer, flags=re.I)
+
+    safer = re.sub(r"\s{2,}", " ", safer)
+    safer = re.sub(r"\s+([,.!?])", r"\1", safer)
+    safer = safer.strip(" \t\r\n,.;:-")
+
+    # If the sanitised result is empty or effectively unchanged, provide
+    # a neutral safe rewrite rather than leaving the risky text in place.
+    if not safer or len(safer) < 8 or safer.lower() == original.lower():
+        safer = (
+            "Sharing an update while keeping private location, security, "
+            "family and access details offline."
+        )
+
+    return safer
+
+
+@app.post("/api/safer-caption")
+@auth
+@limiter.limit("20 per minute")
+def api_safer_caption():
+    caption = request.form.get("caption", "").strip()
+
+    if not caption:
+        return jsonify(error="Enter a caption first."), 400
+
+    safer = create_safer_caption(caption)
+
+    return jsonify(
+        safer_caption=safer,
     )
 
 
@@ -2994,7 +3081,13 @@ main{width:min(760px,calc(100% - 32px));margin:40px auto}.card{background:#151c2
 .danger{border-color:#a54251;background:#381720}label{display:block;margin:15px 0 6px}input{width:100%;padding:12px;border-radius:9px;border:1px solid #394762;background:#0b1020;color:#fff}
 .flash{padding:10px 12px;border:1px solid #4c5f82;border-radius:9px;margin:12px 0}.actions{display:flex;gap:10px;flex-wrap:wrap}
 </style></head><body><main>
-<div class="actions"><a class="btn" href="{{ url_for('home') }}">← Dashboard</a></div>
+<div class="actions">
+<a class="btn" href="{{ url_for('home') }}">← Dashboard</a>
+<form method="post" action="{{ url_for('logout') }}" style="margin:0">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<button class="btn" type="submit">Log out</button>
+</form>
+</div>
 <h1>My Account</h1>
 {% with messages=get_flashed_messages() %}{% if messages %}{% for m in messages %}<div class="flash">{{ m }}</div>{% endfor %}{% endif %}{% endwith %}
 <div class="card"><h2>Account details</h2><p><strong>Email:</strong> {{ user["email"] }}</p><p><strong>Account type:</strong> {{ user["role"] or "user" }}</p><p><strong>Registered:</strong> {{ user["created_at"] or "—" }}</p></div>
@@ -3406,7 +3499,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="5.5",
+        version="5.6",
     )
 
 
