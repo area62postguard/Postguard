@@ -2,6 +2,7 @@ import os
 import re
 import json
 import secrets
+import hmac
 import sqlite3
 
 import psycopg
@@ -14,6 +15,7 @@ from functools import wraps
 from flask import (
     Flask,
     render_template,
+    render_template_string,
     request,
     redirect,
     url_for,
@@ -775,6 +777,231 @@ def register():
         return redirect(url_for("login"))
 
     return render_template("register.html")
+
+
+# ============================================================
+# SECURE ONE-TIME ADMIN RECOVERY
+# Enabled only while the two recovery environment variables exist.
+# Delete POSTGUARD_ADMIN_RECOVERY_TOKEN after a successful reset.
+# ============================================================
+
+ADMIN_RECOVERY_PAGE = """
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PostGuard Admin Recovery</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: #0b1020;
+            color: #f5f7fb;
+            margin: 0;
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+        }
+        .card {
+            width: min(92vw, 440px);
+            background: #151c2f;
+            border: 1px solid #2a3550;
+            border-radius: 16px;
+            padding: 28px;
+            box-shadow: 0 20px 60px rgba(0,0,0,.35);
+        }
+        h1 { margin-top: 0; font-size: 1.55rem; }
+        p { color: #b9c3d7; line-height: 1.5; }
+        label { display:block; margin-top:16px; margin-bottom:6px; }
+        input {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 12px;
+            border-radius: 10px;
+            border: 1px solid #3a4664;
+            background: #0f1526;
+            color: #fff;
+        }
+        button {
+            width:100%;
+            margin-top:20px;
+            padding:12px;
+            border:0;
+            border-radius:10px;
+            font-weight:700;
+            cursor:pointer;
+        }
+        .msg {
+            margin-top: 14px;
+            padding: 10px 12px;
+            border-radius: 10px;
+            background: #202a43;
+        }
+    </style>
+</head>
+<body>
+    <main class="card">
+        <h1>PostGuard Admin Recovery</h1>
+        <p>This page is active only while the recovery environment variables are configured.</p>
+
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                {% for message in messages %}
+                    <div class="msg">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <form method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+            <label for="email">Admin email</label>
+            <input id="email" name="email" type="email" autocomplete="username" required>
+
+            <label for="token">Recovery token</label>
+            <input id="token" name="token" type="password" autocomplete="off" required>
+
+            <label for="password">New password</label>
+            <input id="password" name="password" type="password" autocomplete="new-password" minlength="12" required>
+
+            <label for="confirm">Confirm new password</label>
+            <input id="confirm" name="confirm" type="password" autocomplete="new-password" minlength="12" required>
+
+            <button type="submit">Reset Admin Password</button>
+        </form>
+    </main>
+</body>
+</html>
+"""
+
+
+@app.route("/admin/recover", methods=["GET", "POST"])
+@limiter.limit("3 per minute", methods=["POST"])
+def admin_recover():
+    configured_email = os.getenv(
+        "POSTGUARD_ADMIN_EMAIL",
+        "",
+    ).strip().lower()
+
+    configured_token = os.getenv(
+        "POSTGUARD_ADMIN_RECOVERY_TOKEN",
+        "",
+    )
+
+    # Hide the recovery endpoint completely unless deliberately enabled.
+    if not configured_email or not configured_token:
+        abort(404)
+
+    if request.method == "POST":
+        email = request.form.get(
+            "email",
+            "",
+        ).strip().lower()
+
+        supplied_token = request.form.get(
+            "token",
+            "",
+        )
+
+        password = request.form.get(
+            "password",
+            "",
+        )
+
+        confirm = request.form.get(
+            "confirm",
+            "",
+        )
+
+        if email != configured_email:
+            flash("Recovery details were not accepted.")
+            return render_template_string(ADMIN_RECOVERY_PAGE), 400
+
+        if not hmac.compare_digest(
+            supplied_token,
+            configured_token,
+        ):
+            flash("Recovery details were not accepted.")
+            return render_template_string(ADMIN_RECOVERY_PAGE), 400
+
+        if len(password) < 12:
+            flash("New password must be at least 12 characters.")
+            return render_template_string(ADMIN_RECOVERY_PAGE), 400
+
+        if password != confirm:
+            flash("Passwords do not match.")
+            return render_template_string(ADMIN_RECOVERY_PAGE), 400
+
+        c = db()
+
+        user = c.execute(
+            "SELECT id FROM users WHERE email=?",
+            (email,),
+        ).fetchone()
+
+        if user:
+            c.execute(
+                """
+                UPDATE users
+                SET password=?, role='admin'
+                WHERE id=?
+                """,
+                (
+                    generate_password_hash(password),
+                    user["id"],
+                ),
+            )
+            admin_user_id = user["id"]
+        else:
+            created = c.execute(
+                """
+                INSERT INTO users(
+                    email,
+                    password,
+                    role,
+                    created_at
+                )
+                VALUES(?,?,?,?)
+                RETURNING id
+                """,
+                (
+                    email,
+                    generate_password_hash(password),
+                    "admin",
+                    now(),
+                ),
+            ).fetchone()
+            admin_user_id = created["id"]
+
+        # Preserve ownership of any legacy records that still have no owner.
+        c.execute(
+            "UPDATE principals SET user_id=? WHERE user_id IS NULL",
+            (admin_user_id,),
+        )
+        c.execute(
+            "UPDATE checks SET user_id=? WHERE user_id IS NULL",
+            (admin_user_id,),
+        )
+        c.execute(
+            "UPDATE alerts SET user_id=? WHERE user_id IS NULL",
+            (admin_user_id,),
+        )
+        c.execute(
+            "UPDATE cases SET user_id=? WHERE user_id IS NULL",
+            (admin_user_id,),
+        )
+
+        c.commit()
+        c.close()
+
+        session.clear()
+        flash(
+            "Admin password reset successfully. "
+            "Sign in, then remove POSTGUARD_ADMIN_RECOVERY_TOKEN from Render."
+        )
+        return redirect(url_for("login"))
+
+    return render_template_string(ADMIN_RECOVERY_PAGE)
 
 
 # ============================================================
@@ -1791,7 +2018,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="4.2",
+        version="4.3",
     )
 
 
