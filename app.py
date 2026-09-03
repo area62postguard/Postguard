@@ -259,7 +259,9 @@ def init():
     ensure_column("alerts", "user_id", "INTEGER")
     ensure_column("cases", "user_id", "INTEGER")
     ensure_column("users", "enabled", "INTEGER DEFAULT 1")
+    ensure_column("users", "reset_required", "INTEGER DEFAULT 0")
     c.execute("UPDATE users SET enabled=1 WHERE enabled IS NULL")
+    c.execute("UPDATE users SET reset_required=0 WHERE reset_required IS NULL")
 
     admin_row = c.execute(
         """
@@ -370,7 +372,7 @@ def auth(f):
 
         c = db()
         account = c.execute(
-            "SELECT role, enabled FROM users WHERE id=?",
+            "SELECT role, enabled, reset_required FROM users WHERE id=?",
             (session["uid"],),
         ).fetchone()
         c.close()
@@ -385,6 +387,14 @@ def auth(f):
             return redirect(url_for("login"))
 
         session["role"] = account["role"] or "user"
+
+        if (
+            account["reset_required"] == 1
+            and account["role"] != "admin"
+            and request.endpoint != "forced_password_reset"
+        ):
+            return redirect(url_for("forced_password_reset"))
+
         return f(*args, **kwargs)
 
     return wrapped
@@ -1089,6 +1099,9 @@ def login():
             session["uid"] = user["id"]
             session["email"] = email
             session["role"] = role
+
+            if user["reset_required"] == 1 and role != "admin":
+                return redirect(url_for("forced_password_reset"))
 
             return redirect(url_for("home"))
 
@@ -2059,6 +2072,143 @@ def audit_api():
     )
 
 
+
+# ============================================================
+# FORCED CUSTOMER PASSWORD RESET
+# ============================================================
+
+FORCED_PASSWORD_RESET_PAGE = """
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>PostGuard · Reset Password</title>
+    <style>
+        :root{color-scheme:dark}
+        *{box-sizing:border-box}
+        body{margin:0;min-height:100vh;display:grid;place-items:center;
+             font-family:system-ui,sans-serif;background:#0b1020;color:#f5f7fb;padding:24px}
+        .panel{width:min(520px,100%);background:#151c2f;border:1px solid #26314a;
+               border-radius:16px;padding:28px}
+        h1{margin-top:0}
+        .muted{color:#aeb9ce;line-height:1.5}
+        label{display:block;margin:18px 0 7px}
+        input{width:100%;padding:12px;border-radius:9px;border:1px solid #394762;
+              background:#0b1020;color:#f5f7fb}
+        button{width:100%;margin-top:22px;padding:12px;border-radius:9px;
+               border:1px solid #4c5f82;background:#1b2742;color:#fff;cursor:pointer}
+        .flash{padding:10px 12px;border:1px solid #7b3540;border-radius:9px;margin:12px 0}
+    </style>
+</head>
+<body>
+<div class="panel">
+    <h1>Password reset required</h1>
+    <p class="muted">
+        An administrator has required a password reset for {{ session.get("email") }}.
+        Choose a new password before continuing to PostGuard.
+    </p>
+
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            {% for message in messages %}
+                <div class="flash">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    <form method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <label for="password">New password</label>
+        <input id="password" name="password" type="password"
+               minlength="12" autocomplete="new-password" required>
+
+        <label for="confirm_password">Confirm new password</label>
+        <input id="confirm_password" name="confirm_password" type="password"
+               minlength="12" autocomplete="new-password" required>
+
+        <button type="submit">Set new password</button>
+    </form>
+</div>
+</body>
+</html>
+"""
+
+
+@app.route("/account/reset-password", methods=["GET", "POST"])
+@limiter.limit("5 per minute", methods=["POST"])
+def forced_password_reset():
+    if "uid" not in session:
+        return redirect(url_for("login"))
+
+    c = db()
+    user = c.execute(
+        """
+        SELECT id, email, password, role, enabled, reset_required
+        FROM users
+        WHERE id=?
+        """,
+        (session["uid"],),
+    ).fetchone()
+
+    if not user:
+        c.close()
+        session.clear()
+        return redirect(url_for("login"))
+
+    if user["enabled"] == 0 and user["role"] != "admin":
+        c.close()
+        session.clear()
+        flash("This PostGuard account has been disabled by an administrator.")
+        return redirect(url_for("login"))
+
+    if user["role"] == "admin" or user["reset_required"] != 1:
+        c.close()
+        return redirect(url_for("home"))
+
+    if request.method == "POST":
+        password = request.form.get("password", "")
+        confirm_password = request.form.get("confirm_password", "")
+
+        if len(password) < 12:
+            c.close()
+            flash("Your new password must be at least 12 characters.")
+            return render_template_string(FORCED_PASSWORD_RESET_PAGE), 400
+
+        if password != confirm_password:
+            c.close()
+            flash("The new passwords do not match.")
+            return render_template_string(FORCED_PASSWORD_RESET_PAGE), 400
+
+        if check_password_hash(user["password"], password):
+            c.close()
+            flash("Choose a password different from your current password.")
+            return render_template_string(FORCED_PASSWORD_RESET_PAGE), 400
+
+        c.execute(
+            """
+            UPDATE users
+            SET password=?, reset_required=0
+            WHERE id=?
+            """,
+            (
+                generate_password_hash(password),
+                user["id"],
+            ),
+        )
+        c.commit()
+        c.close()
+
+        audit("forced_password_reset_complete", f"user_id={user['id']}")
+        session.clear()
+        flash("Password changed successfully. Sign in with your new password.")
+        return redirect(url_for("login"))
+
+    c.close()
+    return render_template_string(FORCED_PASSWORD_RESET_PAGE)
+
+
 # ============================================================
 # ADMIN USER MANAGEMENT
 # ============================================================
@@ -2071,14 +2221,14 @@ ADMIN_USERS_PAGE = """
 <header><div><h1>PostGuard Admin · Registered Users</h1><div class="muted">{{ session.get("email") }} · ADMIN</div></div><div><a class="btn" href="{{ url_for('home') }}">Dashboard</a></div></header>
 <main>
 <div class="cards"><div class="card"><div class="muted">Registered</div><div class="num">{{ users|length }}</div></div><div class="card"><div class="muted">Customers</div><div class="num">{{ customer_count }}</div></div><div class="card"><div class="muted">Disabled</div><div class="num">{{ disabled_count }}</div></div><div class="card"><div class="muted">Admins</div><div class="num">{{ admin_count }}</div></div></div>
-<div class="table"><table><thead><tr><th>ID</th><th>Email</th><th>Role</th><th>Status</th><th>Registered</th><th>Scans</th><th>Alerts</th><th>Cases</th><th>Controls</th></tr></thead><tbody>
-{% for user in users %}<tr class="{% if user['enabled']==0 %}disabled{% endif %}"><td>{{ user['id'] }}</td><td>{{ user['email'] }}</td><td><span class="pill">{{ user['role'] or 'user' }}</span></td><td><span class="pill">{{ 'Enabled' if user['enabled'] != 0 else 'Disabled' }}</span></td><td>{{ user['created_at'] or '—' }}</td><td>{{ user['check_count'] }}</td><td>{{ user['alert_count'] }}</td><td>{{ user['case_count'] }}</td><td>{% if user['role'] != 'admin' %}<a class="btn" href="{{ url_for('admin_user_detail',user_id=user['id']) }}">View</a> {% if user['enabled']==0 %}<form class="inline" method="post" action="{{ url_for('admin_enable_user',user_id=user['id']) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn success">Enable</button></form>{% else %}<form class="inline" method="post" action="{{ url_for('admin_disable_user',user_id=user['id']) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn danger" onclick="return confirm('Disable this customer account?')">Disable</button></form>{% endif %}{% else %}<span class="muted">Protected admin</span>{% endif %}</td></tr>{% else %}<tr><td colspan="9">No users found.</td></tr>{% endfor %}
+<div class="table"><table><thead><tr><th>ID</th><th>Email</th><th>Role</th><th>Status</th><th>Password</th><th>Registered</th><th>Scans</th><th>Alerts</th><th>Cases</th><th>Controls</th></tr></thead><tbody>
+{% for user in users %}<tr class="{% if user['enabled']==0 %}disabled{% endif %}"><td>{{ user['id'] }}</td><td>{{ user['email'] }}</td><td><span class="pill">{{ user['role'] or 'user' }}</span></td><td><span class="pill">{{ 'Enabled' if user['enabled'] != 0 else 'Disabled' }}</span></td><td><span class="pill">{{ 'Reset required' if user['reset_required']==1 else 'Current' }}</span></td><td>{{ user['created_at'] or '—' }}</td><td>{{ user['check_count'] }}</td><td>{{ user['alert_count'] }}</td><td>{{ user['case_count'] }}</td><td>{% if user['role'] != 'admin' %}<a class="btn" href="{{ url_for('admin_user_detail',user_id=user['id']) }}">View</a> <form class="inline" method="post" action="{{ url_for('admin_force_password_reset',user_id=user['id']) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn" onclick="return confirm('Require this customer to change their password at next sign-in?')">Force password reset</button></form> {% if user['enabled']==0 %}<form class="inline" method="post" action="{{ url_for('admin_enable_user',user_id=user['id']) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn success">Enable</button></form>{% else %}<form class="inline" method="post" action="{{ url_for('admin_disable_user',user_id=user['id']) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn danger" onclick="return confirm('Disable this customer account?')">Disable</button></form>{% endif %}{% else %}<span class="muted">Protected admin</span>{% endif %}</td></tr>{% else %}<tr><td colspan="9">No users found.</td></tr>{% endfor %}
 </tbody></table></div><p class="muted">Passwords are never displayed. Disabling a customer blocks login and invalidates their active session on its next request.</p></main></body></html>
 """
 
 ADMIN_USER_DETAIL_PAGE = """
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PostGuard Admin · Customer</title><style>:root{color-scheme:dark}body{margin:0;font-family:system-ui,sans-serif;background:#0b1020;color:#f5f7fb}header,main{padding:24px 28px}header{border-bottom:1px solid #26314a}.muted{color:#aeb9ce}.btn{display:inline-block;padding:8px 11px;border:1px solid #394762;border-radius:8px;background:#151c2f;color:inherit;text-decoration:none}.table{overflow-x:auto;background:#151c2f;border:1px solid #26314a;border-radius:14px;margin:12px 0 24px}table{width:100%;border-collapse:collapse;min-width:720px}th,td{padding:11px 13px;text-align:left;border-bottom:1px solid #26314a}th{color:#aeb9ce;font-size:.8rem;text-transform:uppercase}</style></head><body>
-<header><a class="btn" href="{{ url_for('admin_users') }}">← Registered Users</a><h1>{{ user['email'] }}</h1><div class="muted">{{ user['role'] or 'user' }} · {{ 'Enabled' if user['enabled'] != 0 else 'Disabled' }} · Registered {{ user['created_at'] or '—' }}</div></header><main>
+<header><a class="btn" href="{{ url_for('admin_users') }}">← Registered Users</a><h1>{{ user['email'] }}</h1><div class="muted">{{ user['role'] or 'user' }} · {{ 'Enabled' if user['enabled'] != 0 else 'Disabled' }} · {{ 'Password reset required' if user['reset_required']==1 else 'Password current' }} · Registered {{ user['created_at'] or '—' }}</div></header><main>
 <h2>Recent scans</h2><div class="table"><table><thead><tr><th>ID</th><th>Risk</th><th>Score</th><th>Caption</th><th>Created</th></tr></thead><tbody>{% for r in checks %}<tr><td>{{ r['id'] }}</td><td>{{ r['risk'] }}</td><td>{{ r['score'] }}</td><td>{{ r['caption'] or '—' }}</td><td>{{ r['created_at'] }}</td></tr>{% else %}<tr><td colspan="5">No scans.</td></tr>{% endfor %}</tbody></table></div>
 <h2>Alerts</h2><div class="table"><table><thead><tr><th>ID</th><th>Severity</th><th>Category</th><th>Status</th><th>Created</th></tr></thead><tbody>{% for r in alerts %}<tr><td>{{ r['id'] }}</td><td>{{ r['severity'] }}</td><td>{{ r['category'] }}</td><td>{{ r['status'] }}</td><td>{{ r['created_at'] }}</td></tr>{% else %}<tr><td colspan="5">No alerts.</td></tr>{% endfor %}</tbody></table></div>
 <h2>Cases</h2><div class="table"><table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Owner</th><th>Created</th></tr></thead><tbody>{% for r in cases %}<tr><td>{{ r['id'] }}</td><td>{{ r['title'] }}</td><td>{{ r['status'] }}</td><td>{{ r['owner'] or '—' }}</td><td>{{ r['created_at'] }}</td></tr>{% else %}<tr><td colspan="5">No cases.</td></tr>{% endfor %}</tbody></table></div>
@@ -2090,7 +2240,7 @@ ADMIN_USER_DETAIL_PAGE = """
 def admin_users():
     c=db()
     users=c.execute("""
-        SELECT u.id,u.email,u.role,u.enabled,u.created_at,
+        SELECT u.id,u.email,u.role,u.enabled,u.reset_required,u.created_at,
         (SELECT COUNT(*) FROM checks ch WHERE ch.user_id=u.id) AS check_count,
         (SELECT COUNT(*) FROM alerts a WHERE a.user_id=u.id) AS alert_count,
         (SELECT COUNT(*) FROM cases ca WHERE ca.user_id=u.id) AS case_count
@@ -2101,6 +2251,43 @@ def admin_users():
     customer_count=sum((u["role"] or "user")!="admin" for u in users)
     disabled_count=sum((u["role"] or "user")!="admin" and u["enabled"]==0 for u in users)
     return render_template_string(ADMIN_USERS_PAGE,users=users,admin_count=admin_count,customer_count=customer_count,disabled_count=disabled_count)
+
+
+@app.post("/admin/users/<int:user_id>/force-password-reset")
+@admin_required
+def admin_force_password_reset(user_id):
+    if user_id == session.get("uid"):
+        abort(400)
+
+    c = db()
+    user = c.execute(
+        "SELECT id, role FROM users WHERE id=?",
+        (user_id,),
+    ).fetchone()
+
+    if not user:
+        c.close()
+        abort(404)
+
+    if user["role"] == "admin":
+        c.close()
+        abort(403)
+
+    c.execute(
+        """
+        UPDATE users
+        SET reset_required=1
+        WHERE id=?
+        """,
+        (user_id,),
+    )
+    c.commit()
+    c.close()
+
+    audit("admin_force_password_reset", f"user_id={user_id}")
+    flash("Password reset required at the customer's next sign-in.")
+    return redirect(url_for("admin_users"))
+
 
 @app.post("/admin/users/<int:user_id>/disable")
 @admin_required
@@ -2126,7 +2313,7 @@ def admin_enable_user(user_id):
 @app.get("/admin/users/<int:user_id>")
 @admin_required
 def admin_user_detail(user_id):
-    c=db(); user=c.execute("SELECT id,email,role,enabled,created_at FROM users WHERE id=?",(user_id,)).fetchone()
+    c=db(); user=c.execute("SELECT id,email,role,enabled,reset_required,created_at FROM users WHERE id=?",(user_id,)).fetchone()
     if not user: c.close(); abort(404)
     checks=c.execute("SELECT * FROM checks WHERE user_id=? ORDER BY id DESC LIMIT 100",(user_id,)).fetchall()
     alerts=c.execute("SELECT * FROM alerts WHERE user_id=? ORDER BY id DESC LIMIT 100",(user_id,)).fetchall()
@@ -2144,7 +2331,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="4.6",
+        version="4.7",
     )
 
 
