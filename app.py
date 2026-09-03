@@ -615,53 +615,49 @@ def risk(score):
 
 # ============================================================
 # REGISTRATION
-# Only the FIRST account may register.
+# Public customer registration.
+# Existing administrator account remains admin.
+# All new registrations are normal users.
 # ============================================================
 
 @app.route("/register", methods=["GET", "POST"])
+@limiter.limit("5 per minute", methods=["POST"])
 def register():
-    c = db()
-
-    user_exists = c.execute(
-        "SELECT id FROM users LIMIT 1"
-    ).fetchone()
-
-    c.close()
-
-    if user_exists:
-        flash("Registration is closed.")
-        return redirect(url_for("login"))
+    if "uid" in session:
+        return redirect(url_for("home"))
 
     if request.method == "POST":
-        email = request.form.get(
-            "email",
-            "",
-        ).strip().lower()
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+        confirm = request.form.get("confirm", "")
 
-        password = request.form.get(
-            "password",
-            "",
+        if not email:
+            flash("Email address is required.")
+            return render_template("register.html")
+
+        email_pattern = (
+            r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+"
+            r"@[A-Za-z0-9-]+"
+            r"(?:\.[A-Za-z0-9-]+)+$"
         )
 
-        confirm = request.form.get(
-            "confirm",
-            "",
-        )
+        if not re.match(email_pattern, email):
+            flash("Enter a valid email address.")
+            return render_template("register.html")
 
-        if not email or not password:
-            flash("Email and password are required.")
+        if not password:
+            flash("Password is required.")
             return render_template("register.html")
 
         if password != confirm:
             flash("Passwords do not match.")
             return render_template("register.html")
 
-        if len(password) < 10:
-            flash("Password must be at least 10 characters.")
+        if len(password) < 12:
+            flash("Password must be at least 12 characters.")
             return render_template("register.html")
 
         c = db()
-
         existing = c.execute(
             "SELECT id FROM users WHERE email=?",
             (email,),
@@ -669,38 +665,36 @@ def register():
 
         if existing:
             c.close()
-
-            flash(
-                "An account with that email already exists."
-            )
-
+            flash("An account with that email already exists.")
             return render_template("register.html")
 
-        c.execute(
+        user = c.execute(
             """
-            INSERT INTO users(
-                email,
-                password,
-                role,
-                created_at
-            )
+            INSERT INTO users(email, password, role, created_at)
             VALUES(?,?,?,?)
+            RETURNING id
             """,
             (
                 email,
                 generate_password_hash(password),
-                "admin",
+                "user",
                 now(),
             ),
-        )
+        ).fetchone()
 
+        user_id = user["id"]
         c.commit()
         c.close()
 
-        flash(
-            "Account created. You can now sign in."
+        app.logger.info(
+            "New PostGuard account registered: user_id=%s",
+            user_id,
         )
 
+        flash(
+            "Your PostGuard account has been created. "
+            "You can now sign in."
+        )
         return redirect(url_for("login"))
 
     return render_template("register.html")
