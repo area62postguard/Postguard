@@ -1005,6 +1005,39 @@ document.querySelectorAll(".toggle").forEach(function(button){
 """
 
 
+
+@app.after_request
+def add_postguard_branding(response):
+    """Add the PostGuard logo to legacy HTML templates without changing APIs."""
+    try:
+        if (
+            response.status_code == 200
+            and response.mimetype == "text/html"
+            and not response.direct_passthrough
+        ):
+            html = response.get_data(as_text=True)
+            if (
+                "<body" in html.lower()
+                and "postguard_logo.jpg" not in html
+                and "pg-global-logo" not in html
+            ):
+                css = """<style>
+.pg-global-logo{position:fixed;top:16px;left:16px;z-index:9999;width:58px;height:58px;border-radius:50%;overflow:hidden;border:1px solid rgba(135,173,255,.38);background:#07101d;box-shadow:0 8px 28px rgba(0,0,0,.34)}
+.pg-global-logo img{display:block;width:100%;height:100%;object-fit:cover}
+@media(max-width:700px){.pg-global-logo{width:46px;height:46px;top:10px;left:10px}}
+</style>"""
+                logo = """<a href="/" class="pg-global-logo" aria-label="PostGuard home"><img src="/static/postguard_logo.jpg" alt="PostGuard"></a>"""
+                if "</head>" in html:
+                    html = html.replace("</head>", css + "</head>", 1)
+                match = re.search(r"<body[^>]*>", html, flags=re.I)
+                if match:
+                    pos = match.end()
+                    html = html[:pos] + logo + html[pos:]
+                    response.set_data(html)
+    except Exception:
+        pass
+    return response
+
 @app.route("/register", methods=["GET", "POST"])
 @limiter.limit("5 per minute", methods=["POST"])
 def register():
@@ -1168,9 +1201,19 @@ ADMIN_RECOVERY_PAGE = """
             border-radius: 10px;
             background: #202a43;
         }
-    </style>
+    
+.pg-global-logo{position:fixed;top:16px;left:16px;z-index:9999;width:58px;height:58px;border-radius:50%;overflow:hidden;border:1px solid rgba(135,173,255,.38);background:#07101d;box-shadow:0 8px 28px rgba(0,0,0,.34)}
+.pg-global-logo:hover{transform:scale(1.04)}
+.pg-global-logo img{display:block;width:100%;height:100%;object-fit:cover}
+@media(max-width:700px){.pg-global-logo{width:46px;height:46px;top:10px;left:10px}}
+
+</style>
 </head>
 <body>
+<a href="{{ url_for('home') }}" class="pg-global-logo" aria-label="PostGuard home">
+    <img src="{{ url_for('static', filename='postguard_logo.jpg') }}" alt="PostGuard">
+</a>
+
     <main class="card">
         <h1>PostGuard Admin Recovery</h1>
         <p>This page is active only while the recovery environment variables are configured.</p>
@@ -1473,9 +1516,19 @@ tr:last-child td{border-bottom:0}
 .alert-item:last-child{border-bottom:0}
 @media(max-width:980px){.shell{grid-template-columns:1fr}.sidebar{display:none}.cards{grid-template-columns:repeat(2,1fr)}.section-grid{grid-template-columns:1fr}}
 @media(max-width:600px){.main{padding:18px}.cards{grid-template-columns:1fr}}
+
+.pg-global-logo{position:fixed;top:16px;left:16px;z-index:9999;width:58px;height:58px;border-radius:50%;overflow:hidden;border:1px solid rgba(135,173,255,.38);background:#07101d;box-shadow:0 8px 28px rgba(0,0,0,.34)}
+.pg-global-logo:hover{transform:scale(1.04)}
+.pg-global-logo img{display:block;width:100%;height:100%;object-fit:cover}
+@media(max-width:700px){.pg-global-logo{width:46px;height:46px;top:10px;left:10px}}
+
 </style>
 </head>
 <body>
+<a href="{{ url_for('home') }}" class="pg-global-logo" aria-label="PostGuard home">
+    <img src="{{ url_for('static', filename='postguard_logo.jpg') }}" alt="PostGuard">
+</a>
+
 <div class="shell">
 <aside class="sidebar">
     <div class="brand">POST<span>GUARD</span></div>
@@ -1968,9 +2021,19 @@ textarea.field{min-height:180px;resize:vertical}
 .safe{color:#7dd3a7}.warn{color:#f6c56f}.danger{color:#ff8c8c}
 .preview{max-width:100%;max-height:260px;border-radius:12px;margin-top:10px;display:none}
 @media(max-width:850px){.shell{grid-template-columns:1fr}.sidebar{display:none}.grid{grid-template-columns:1fr}}
+
+.pg-global-logo{position:fixed;top:16px;left:16px;z-index:9999;width:58px;height:58px;border-radius:50%;overflow:hidden;border:1px solid rgba(135,173,255,.38);background:#07101d;box-shadow:0 8px 28px rgba(0,0,0,.34)}
+.pg-global-logo:hover{transform:scale(1.04)}
+.pg-global-logo img{display:block;width:100%;height:100%;object-fit:cover}
+@media(max-width:700px){.pg-global-logo{width:46px;height:46px;top:10px;left:10px}}
+
 </style>
 </head>
 <body>
+<a href="{{ url_for('home') }}" class="pg-global-logo" aria-label="PostGuard home">
+    <img src="{{ url_for('static', filename='postguard_logo.jpg') }}" alt="PostGuard">
+</a>
+
 <div class="shell">
 <aside class="sidebar">
     <div class="brand">POST<span>GUARD</span></div>
@@ -2328,9 +2391,19 @@ a{color:inherit}.main{max-width:1000px;margin:auto;padding:30px 20px}
 .safe{color:#7dd3a7}.warn{color:#f6c56f}.danger{color:#ff8c8c}
 .caption{white-space:pre-wrap;overflow-wrap:anywhere}
 @media(max-width:700px){.grid{grid-template-columns:1fr}}
+
+.pg-global-logo{position:fixed;top:16px;left:16px;z-index:9999;width:58px;height:58px;border-radius:50%;overflow:hidden;border:1px solid rgba(135,173,255,.38);background:#07101d;box-shadow:0 8px 28px rgba(0,0,0,.34)}
+.pg-global-logo:hover{transform:scale(1.04)}
+.pg-global-logo img{display:block;width:100%;height:100%;object-fit:cover}
+@media(max-width:700px){.pg-global-logo{width:46px;height:46px;top:10px;left:10px}}
+
 </style>
 </head>
 <body>
+<a href="{{ url_for('home') }}" class="pg-global-logo" aria-label="PostGuard home">
+    <img src="{{ url_for('static', filename='postguard_logo.jpg') }}" alt="PostGuard">
+</a>
+
 <main class="main">
 <div class="top">
     <div>
@@ -3005,9 +3078,19 @@ a{color:inherit}.main{max-width:1000px;margin:auto;padding:30px 20px}
 .caption{white-space:pre-wrap;overflow-wrap:anywhere}
 .severity{font-size:1.35rem;font-weight:850}
 @media(max-width:700px){.grid{grid-template-columns:1fr}}
+
+.pg-global-logo{position:fixed;top:16px;left:16px;z-index:9999;width:58px;height:58px;border-radius:50%;overflow:hidden;border:1px solid rgba(135,173,255,.38);background:#07101d;box-shadow:0 8px 28px rgba(0,0,0,.34)}
+.pg-global-logo:hover{transform:scale(1.04)}
+.pg-global-logo img{display:block;width:100%;height:100%;object-fit:cover}
+@media(max-width:700px){.pg-global-logo{width:46px;height:46px;top:10px;left:10px}}
+
 </style>
 </head>
 <body>
+<a href="{{ url_for('home') }}" class="pg-global-logo" aria-label="PostGuard home">
+    <img src="{{ url_for('static', filename='postguard_logo.jpg') }}" alt="PostGuard">
+</a>
+
 <main class="main">
 <div class="top">
     <div>
@@ -3333,9 +3416,19 @@ label{display:block;font-weight:700;margin-bottom:7px}
 .field{margin-top:14px}
 .caption{white-space:pre-wrap;overflow-wrap:anywhere}
 @media(max-width:700px){.grid{grid-template-columns:1fr}}
+
+.pg-global-logo{position:fixed;top:16px;left:16px;z-index:9999;width:58px;height:58px;border-radius:50%;overflow:hidden;border:1px solid rgba(135,173,255,.38);background:#07101d;box-shadow:0 8px 28px rgba(0,0,0,.34)}
+.pg-global-logo:hover{transform:scale(1.04)}
+.pg-global-logo img{display:block;width:100%;height:100%;object-fit:cover}
+@media(max-width:700px){.pg-global-logo{width:46px;height:46px;top:10px;left:10px}}
+
 </style>
 </head>
 <body>
+<a href="{{ url_for('home') }}" class="pg-global-logo" aria-label="PostGuard home">
+    <img src="{{ url_for('static', filename='postguard_logo.jpg') }}" alt="PostGuard">
+</a>
+
 <main class="main">
 <div class="top">
     <div>
@@ -3622,9 +3715,19 @@ a{color:inherit}.main{max-width:1100px;margin:auto;padding:30px 20px}
 .filters a{padding:8px 11px;border-radius:9px;border:1px solid #31415e;text-decoration:none}
 @media(max-width:800px){.grid{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:500px){.grid{grid-template-columns:1fr}}
+
+.pg-global-logo{position:fixed;top:16px;left:16px;z-index:9999;width:58px;height:58px;border-radius:50%;overflow:hidden;border:1px solid rgba(135,173,255,.38);background:#07101d;box-shadow:0 8px 28px rgba(0,0,0,.34)}
+.pg-global-logo:hover{transform:scale(1.04)}
+.pg-global-logo img{display:block;width:100%;height:100%;object-fit:cover}
+@media(max-width:700px){.pg-global-logo{width:46px;height:46px;top:10px;left:10px}}
+
 </style>
 </head>
 <body>
+<a href="{{ url_for('home') }}" class="pg-global-logo" aria-label="PostGuard home">
+    <img src="{{ url_for('static', filename='postguard_logo.jpg') }}" alt="PostGuard">
+</a>
+
 <main class="main">
 <div class="top">
     <div>
@@ -3967,9 +4070,19 @@ FORCED_PASSWORD_RESET_PAGE = """
         button{width:100%;margin-top:22px;padding:12px;border-radius:9px;
                border:1px solid #4c5f82;background:#1b2742;color:#fff;cursor:pointer}
         .flash{padding:10px 12px;border:1px solid #7b3540;border-radius:9px;margin:12px 0}
-    </style>
+    
+.pg-global-logo{position:fixed;top:16px;left:16px;z-index:9999;width:58px;height:58px;border-radius:50%;overflow:hidden;border:1px solid rgba(135,173,255,.38);background:#07101d;box-shadow:0 8px 28px rgba(0,0,0,.34)}
+.pg-global-logo:hover{transform:scale(1.04)}
+.pg-global-logo img{display:block;width:100%;height:100%;object-fit:cover}
+@media(max-width:700px){.pg-global-logo{width:46px;height:46px;top:10px;left:10px}}
+
+</style>
 </head>
 <body>
+<a href="{{ url_for('home') }}" class="pg-global-logo" aria-label="PostGuard home">
+    <img src="{{ url_for('static', filename='postguard_logo.jpg') }}" alt="PostGuard">
+</a>
+
 <div class="panel">
     <h1>Password reset required</h1>
     <p class="muted">
@@ -4092,7 +4205,17 @@ main{width:min(760px,calc(100% - 32px));margin:40px auto}.card{background:#151c2
 .muted{color:#aeb9ce}.btn{display:inline-block;padding:10px 13px;border:1px solid #394762;border-radius:9px;background:#151c2f;color:#fff;text-decoration:none;cursor:pointer}
 .danger{border-color:#a54251;background:#381720}label{display:block;margin:15px 0 6px}input{width:100%;padding:12px;border-radius:9px;border:1px solid #394762;background:#0b1020;color:#fff}
 .flash{padding:10px 12px;border:1px solid #4c5f82;border-radius:9px;margin:12px 0}.actions{display:flex;gap:10px;flex-wrap:wrap}
-</style></head><body><main>
+
+.pg-global-logo{position:fixed;top:16px;left:16px;z-index:9999;width:58px;height:58px;border-radius:50%;overflow:hidden;border:1px solid rgba(135,173,255,.38);background:#07101d;box-shadow:0 8px 28px rgba(0,0,0,.34)}
+.pg-global-logo:hover{transform:scale(1.04)}
+.pg-global-logo img{display:block;width:100%;height:100%;object-fit:cover}
+@media(max-width:700px){.pg-global-logo{width:46px;height:46px;top:10px;left:10px}}
+
+</style></head><body>
+<a href="{{ url_for('home') }}" class="pg-global-logo" aria-label="PostGuard home">
+    <img src="{{ url_for('static', filename='postguard_logo.jpg') }}" alt="PostGuard">
+</a>
+<main>
 <div class="actions">
 <a class="btn" href="{{ url_for('home') }}">← Dashboard</a>
 <form method="post" action="{{ url_for('logout') }}" style="margin:0">
@@ -4124,7 +4247,17 @@ ACCOUNT_DELETE_PAGE = """
 .panel{width:min(600px,100%);background:#151c2f;border:1px solid #7b3540;border-radius:16px;padding:28px}.warning{line-height:1.5}.muted{color:#aeb9ce}
 label{display:block;margin:16px 0 6px}input{width:100%;padding:12px;border-radius:9px;border:1px solid #394762;background:#0b1020;color:#fff}
 .btn{display:inline-block;margin-top:18px;padding:11px 14px;border-radius:9px;border:1px solid #394762;background:#151c2f;color:#fff;text-decoration:none;cursor:pointer}.danger{border-color:#a54251;background:#381720}
-</style></head><body><div class="panel"><h1>Delete my account</h1>
+
+.pg-global-logo{position:fixed;top:16px;left:16px;z-index:9999;width:58px;height:58px;border-radius:50%;overflow:hidden;border:1px solid rgba(135,173,255,.38);background:#07101d;box-shadow:0 8px 28px rgba(0,0,0,.34)}
+.pg-global-logo:hover{transform:scale(1.04)}
+.pg-global-logo img{display:block;width:100%;height:100%;object-fit:cover}
+@media(max-width:700px){.pg-global-logo{width:46px;height:46px;top:10px;left:10px}}
+
+</style></head><body>
+<a href="{{ url_for('home') }}" class="pg-global-logo" aria-label="PostGuard home">
+    <img src="{{ url_for('static', filename='postguard_logo.jpg') }}" alt="PostGuard">
+</a>
+<div class="panel"><h1>Delete my account</h1>
 <p class="warning"><strong>This is permanent.</strong> Your PostGuard account and PostGuard-owned customer data will be deleted.</p>
 <p class="muted">To confirm, type your email address and current password.</p>
 <form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -4206,7 +4339,17 @@ ADMIN_USERS_PAGE = """
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PostGuard Admin · Users</title>
 <style>
 :root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;font-family:system-ui,sans-serif;background:#0b1020;color:#f5f7fb}header,main{padding:24px 28px}header{border-bottom:1px solid #26314a;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}.muted{color:#aeb9ce}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:22px}.card,.table{background:#151c2f;border:1px solid #26314a;border-radius:14px}.card{padding:16px}.num{font-size:1.8rem;font-weight:800;margin-top:6px}.table{overflow-x:auto}table{width:100%;border-collapse:collapse;min-width:1100px}th,td{padding:12px 14px;text-align:left;border-bottom:1px solid #26314a}th{color:#aeb9ce;font-size:.8rem;text-transform:uppercase}.btn{display:inline-block;padding:8px 11px;border:1px solid #394762;border-radius:8px;background:#151c2f;color:inherit;text-decoration:none;cursor:pointer}.danger{border-color:#7b3540}.success{border-color:#356747}.pill{display:inline-block;padding:4px 8px;border:1px solid #3b4965;border-radius:999px;font-size:.75rem;text-transform:uppercase}.disabled{opacity:.6}.inline{display:inline;margin:0}
+
+.pg-global-logo{position:fixed;top:16px;left:16px;z-index:9999;width:58px;height:58px;border-radius:50%;overflow:hidden;border:1px solid rgba(135,173,255,.38);background:#07101d;box-shadow:0 8px 28px rgba(0,0,0,.34)}
+.pg-global-logo:hover{transform:scale(1.04)}
+.pg-global-logo img{display:block;width:100%;height:100%;object-fit:cover}
+@media(max-width:700px){.pg-global-logo{width:46px;height:46px;top:10px;left:10px}}
+
 </style></head><body>
+<a href="{{ url_for('home') }}" class="pg-global-logo" aria-label="PostGuard home">
+    <img src="{{ url_for('static', filename='postguard_logo.jpg') }}" alt="PostGuard">
+</a>
+
 <header><div><h1>PostGuard Admin · Registered Users</h1><div class="muted">{{ session.get("email") }} · ADMIN</div></div><div><a class="btn" href="{{ url_for('home') }}">Dashboard</a></div></header>
 <main>
 <div class="cards"><div class="card"><div class="muted">Registered</div><div class="num">{{ users|length }}</div></div><div class="card"><div class="muted">Customers</div><div class="num">{{ customer_count }}</div></div><div class="card"><div class="muted">Disabled</div><div class="num">{{ disabled_count }}</div></div><div class="card"><div class="muted">Admins</div><div class="num">{{ admin_count }}</div></div></div>
@@ -4216,7 +4359,17 @@ ADMIN_USERS_PAGE = """
 """
 
 ADMIN_USER_DETAIL_PAGE = """
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PostGuard Admin · Customer</title><style>:root{color-scheme:dark}body{margin:0;font-family:system-ui,sans-serif;background:#0b1020;color:#f5f7fb}header,main{padding:24px 28px}header{border-bottom:1px solid #26314a}.muted{color:#aeb9ce}.btn{display:inline-block;padding:8px 11px;border:1px solid #394762;border-radius:8px;background:#151c2f;color:inherit;text-decoration:none}.table{overflow-x:auto;background:#151c2f;border:1px solid #26314a;border-radius:14px;margin:12px 0 24px}table{width:100%;border-collapse:collapse;min-width:720px}th,td{padding:11px 13px;text-align:left;border-bottom:1px solid #26314a}th{color:#aeb9ce;font-size:.8rem;text-transform:uppercase}</style></head><body>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PostGuard Admin · Customer</title><style>:root{color-scheme:dark}body{margin:0;font-family:system-ui,sans-serif;background:#0b1020;color:#f5f7fb}header,main{padding:24px 28px}header{border-bottom:1px solid #26314a}.muted{color:#aeb9ce}.btn{display:inline-block;padding:8px 11px;border:1px solid #394762;border-radius:8px;background:#151c2f;color:inherit;text-decoration:none}.table{overflow-x:auto;background:#151c2f;border:1px solid #26314a;border-radius:14px;margin:12px 0 24px}table{width:100%;border-collapse:collapse;min-width:720px}th,td{padding:11px 13px;text-align:left;border-bottom:1px solid #26314a}th{color:#aeb9ce;font-size:.8rem;text-transform:uppercase}
+.pg-global-logo{position:fixed;top:16px;left:16px;z-index:9999;width:58px;height:58px;border-radius:50%;overflow:hidden;border:1px solid rgba(135,173,255,.38);background:#07101d;box-shadow:0 8px 28px rgba(0,0,0,.34)}
+.pg-global-logo:hover{transform:scale(1.04)}
+.pg-global-logo img{display:block;width:100%;height:100%;object-fit:cover}
+@media(max-width:700px){.pg-global-logo{width:46px;height:46px;top:10px;left:10px}}
+
+</style></head><body>
+<a href="{{ url_for('home') }}" class="pg-global-logo" aria-label="PostGuard home">
+    <img src="{{ url_for('static', filename='postguard_logo.jpg') }}" alt="PostGuard">
+</a>
+
 <header><a class="btn" href="{{ url_for('admin_users') }}">← Registered Users</a> <a class="btn" href="{{ url_for('admin_delete_user',user_id=user['id']) }}">Delete account</a><h1>{{ user['email'] }}</h1><div class="muted">{{ user['role'] or 'user' }} · {{ 'Enabled' if user['enabled'] != 0 else 'Disabled' }} · {{ 'Password reset required' if user['reset_required']==1 else 'Password current' }} · Registered {{ user['created_at'] or '—' }}</div></header><main>
 <h2>Recent scans</h2><div class="table"><table><thead><tr><th>ID</th><th>Risk</th><th>Score</th><th>Caption</th><th>Created</th></tr></thead><tbody>{% for r in checks %}<tr><td>{{ r['id'] }}</td><td>{{ r['risk'] }}</td><td>{{ r['score'] }}</td><td>{{ r['caption'] or '—' }}</td><td>{{ r['created_at'] }}</td></tr>{% else %}<tr><td colspan="5">No scans.</td></tr>{% endfor %}</tbody></table></div>
 <h2>Alerts</h2><div class="table"><table><thead><tr><th>ID</th><th>Severity</th><th>Category</th><th>Status</th><th>Created</th></tr></thead><tbody>{% for r in alerts %}<tr><td>{{ r['id'] }}</td><td>{{ r['severity'] }}</td><td>{{ r['category'] }}</td><td>{{ r['status'] }}</td><td>{{ r['created_at'] }}</td></tr>{% else %}<tr><td colspan="5">No alerts.</td></tr>{% endfor %}</tbody></table></div>
@@ -4269,9 +4422,19 @@ ADMIN_DELETE_USER_PAGE = """
         .danger{border-color:#a54251;background:#381720}
         .flash{padding:10px 12px;border:1px solid #7b3540;border-radius:9px;margin:12px 0}
         ul{line-height:1.6}
-    </style>
+    
+.pg-global-logo{position:fixed;top:16px;left:16px;z-index:9999;width:58px;height:58px;border-radius:50%;overflow:hidden;border:1px solid rgba(135,173,255,.38);background:#07101d;box-shadow:0 8px 28px rgba(0,0,0,.34)}
+.pg-global-logo:hover{transform:scale(1.04)}
+.pg-global-logo img{display:block;width:100%;height:100%;object-fit:cover}
+@media(max-width:700px){.pg-global-logo{width:46px;height:46px;top:10px;left:10px}}
+
+</style>
 </head>
 <body>
+<a href="{{ url_for('home') }}" class="pg-global-logo" aria-label="PostGuard home">
+    <img src="{{ url_for('static', filename='postguard_logo.jpg') }}" alt="PostGuard">
+</a>
+
 <div class="panel">
     <h1>Delete customer account</h1>
 
@@ -4511,7 +4674,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="6.2",
+        version="6.3",
     )
 
 
