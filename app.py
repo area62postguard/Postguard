@@ -2222,13 +2222,13 @@ ADMIN_USERS_PAGE = """
 <main>
 <div class="cards"><div class="card"><div class="muted">Registered</div><div class="num">{{ users|length }}</div></div><div class="card"><div class="muted">Customers</div><div class="num">{{ customer_count }}</div></div><div class="card"><div class="muted">Disabled</div><div class="num">{{ disabled_count }}</div></div><div class="card"><div class="muted">Admins</div><div class="num">{{ admin_count }}</div></div></div>
 <div class="table"><table><thead><tr><th>ID</th><th>Email</th><th>Role</th><th>Status</th><th>Password</th><th>Registered</th><th>Scans</th><th>Alerts</th><th>Cases</th><th>Controls</th></tr></thead><tbody>
-{% for user in users %}<tr class="{% if user['enabled']==0 %}disabled{% endif %}"><td>{{ user['id'] }}</td><td>{{ user['email'] }}</td><td><span class="pill">{{ user['role'] or 'user' }}</span></td><td><span class="pill">{{ 'Enabled' if user['enabled'] != 0 else 'Disabled' }}</span></td><td><span class="pill">{{ 'Reset required' if user['reset_required']==1 else 'Current' }}</span></td><td>{{ user['created_at'] or '—' }}</td><td>{{ user['check_count'] }}</td><td>{{ user['alert_count'] }}</td><td>{{ user['case_count'] }}</td><td>{% if user['role'] != 'admin' %}<a class="btn" href="{{ url_for('admin_user_detail',user_id=user['id']) }}">View</a> <form class="inline" method="post" action="{{ url_for('admin_force_password_reset',user_id=user['id']) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn" onclick="return confirm('Require this customer to change their password at next sign-in?')">Force password reset</button></form> {% if user['enabled']==0 %}<form class="inline" method="post" action="{{ url_for('admin_enable_user',user_id=user['id']) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn success">Enable</button></form>{% else %}<form class="inline" method="post" action="{{ url_for('admin_disable_user',user_id=user['id']) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn danger" onclick="return confirm('Disable this customer account?')">Disable</button></form>{% endif %}{% else %}<span class="muted">Protected admin</span>{% endif %}</td></tr>{% else %}<tr><td colspan="9">No users found.</td></tr>{% endfor %}
+{% for user in users %}<tr class="{% if user['enabled']==0 %}disabled{% endif %}"><td>{{ user['id'] }}</td><td>{{ user['email'] }}</td><td><span class="pill">{{ user['role'] or 'user' }}</span></td><td><span class="pill">{{ 'Enabled' if user['enabled'] != 0 else 'Disabled' }}</span></td><td><span class="pill">{{ 'Reset required' if user['reset_required']==1 else 'Current' }}</span></td><td>{{ user['created_at'] or '—' }}</td><td>{{ user['check_count'] }}</td><td>{{ user['alert_count'] }}</td><td>{{ user['case_count'] }}</td><td>{% if user['role'] != 'admin' %}<a class="btn" href="{{ url_for('admin_user_detail',user_id=user['id']) }}">View</a> <form class="inline" method="post" action="{{ url_for('admin_force_password_reset',user_id=user['id']) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn" onclick="return confirm('Require this customer to change their password at next sign-in?')">Force password reset</button></form> <a class="btn danger" href="{{ url_for('admin_delete_user',user_id=user['id']) }}">Delete</a> {% if user['enabled']==0 %}<form class="inline" method="post" action="{{ url_for('admin_enable_user',user_id=user['id']) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn success">Enable</button></form>{% else %}<form class="inline" method="post" action="{{ url_for('admin_disable_user',user_id=user['id']) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn danger" onclick="return confirm('Disable this customer account?')">Disable</button></form>{% endif %}{% else %}<span class="muted">Protected admin</span>{% endif %}</td></tr>{% else %}<tr><td colspan="9">No users found.</td></tr>{% endfor %}
 </tbody></table></div><p class="muted">Passwords are never displayed. Disabling a customer blocks login and invalidates their active session on its next request.</p></main></body></html>
 """
 
 ADMIN_USER_DETAIL_PAGE = """
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PostGuard Admin · Customer</title><style>:root{color-scheme:dark}body{margin:0;font-family:system-ui,sans-serif;background:#0b1020;color:#f5f7fb}header,main{padding:24px 28px}header{border-bottom:1px solid #26314a}.muted{color:#aeb9ce}.btn{display:inline-block;padding:8px 11px;border:1px solid #394762;border-radius:8px;background:#151c2f;color:inherit;text-decoration:none}.table{overflow-x:auto;background:#151c2f;border:1px solid #26314a;border-radius:14px;margin:12px 0 24px}table{width:100%;border-collapse:collapse;min-width:720px}th,td{padding:11px 13px;text-align:left;border-bottom:1px solid #26314a}th{color:#aeb9ce;font-size:.8rem;text-transform:uppercase}</style></head><body>
-<header><a class="btn" href="{{ url_for('admin_users') }}">← Registered Users</a><h1>{{ user['email'] }}</h1><div class="muted">{{ user['role'] or 'user' }} · {{ 'Enabled' if user['enabled'] != 0 else 'Disabled' }} · {{ 'Password reset required' if user['reset_required']==1 else 'Password current' }} · Registered {{ user['created_at'] or '—' }}</div></header><main>
+<header><a class="btn" href="{{ url_for('admin_users') }}">← Registered Users</a> <a class="btn" href="{{ url_for('admin_delete_user',user_id=user['id']) }}">Delete account</a><h1>{{ user['email'] }}</h1><div class="muted">{{ user['role'] or 'user' }} · {{ 'Enabled' if user['enabled'] != 0 else 'Disabled' }} · {{ 'Password reset required' if user['reset_required']==1 else 'Password current' }} · Registered {{ user['created_at'] or '—' }}</div></header><main>
 <h2>Recent scans</h2><div class="table"><table><thead><tr><th>ID</th><th>Risk</th><th>Score</th><th>Caption</th><th>Created</th></tr></thead><tbody>{% for r in checks %}<tr><td>{{ r['id'] }}</td><td>{{ r['risk'] }}</td><td>{{ r['score'] }}</td><td>{{ r['caption'] or '—' }}</td><td>{{ r['created_at'] }}</td></tr>{% else %}<tr><td colspan="5">No scans.</td></tr>{% endfor %}</tbody></table></div>
 <h2>Alerts</h2><div class="table"><table><thead><tr><th>ID</th><th>Severity</th><th>Category</th><th>Status</th><th>Created</th></tr></thead><tbody>{% for r in alerts %}<tr><td>{{ r['id'] }}</td><td>{{ r['severity'] }}</td><td>{{ r['category'] }}</td><td>{{ r['status'] }}</td><td>{{ r['created_at'] }}</td></tr>{% else %}<tr><td colspan="5">No alerts.</td></tr>{% endfor %}</tbody></table></div>
 <h2>Cases</h2><div class="table"><table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Owner</th><th>Created</th></tr></thead><tbody>{% for r in cases %}<tr><td>{{ r['id'] }}</td><td>{{ r['title'] }}</td><td>{{ r['status'] }}</td><td>{{ r['owner'] or '—' }}</td><td>{{ r['created_at'] }}</td></tr>{% else %}<tr><td colspan="5">No cases.</td></tr>{% endfor %}</tbody></table></div>
@@ -2251,6 +2251,197 @@ def admin_users():
     customer_count=sum((u["role"] or "user")!="admin" for u in users)
     disabled_count=sum((u["role"] or "user")!="admin" and u["enabled"]==0 for u in users)
     return render_template_string(ADMIN_USERS_PAGE,users=users,admin_count=admin_count,customer_count=customer_count,disabled_count=disabled_count)
+
+
+
+ADMIN_DELETE_USER_PAGE = """
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>PostGuard Admin · Delete Customer</title>
+    <style>
+        :root{color-scheme:dark}
+        *{box-sizing:border-box}
+        body{margin:0;min-height:100vh;display:grid;place-items:center;
+             padding:24px;font-family:system-ui,sans-serif;background:#0b1020;color:#f5f7fb}
+        .panel{width:min(620px,100%);background:#151c2f;border:1px solid #49303a;
+               border-radius:16px;padding:28px}
+        .warning{padding:14px;border:1px solid #7b3540;border-radius:10px;
+                 background:#20131a;line-height:1.5}
+        .muted{color:#aeb9ce;line-height:1.5}
+        label{display:block;margin:18px 0 7px}
+        input{width:100%;padding:12px;border-radius:9px;border:1px solid #394762;
+              background:#0b1020;color:#f5f7fb}
+        .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}
+        .btn{display:inline-block;padding:11px 14px;border-radius:9px;border:1px solid #394762;
+             background:#151c2f;color:#fff;text-decoration:none;cursor:pointer}
+        .danger{border-color:#a54251;background:#381720}
+        .flash{padding:10px 12px;border:1px solid #7b3540;border-radius:9px;margin:12px 0}
+        ul{line-height:1.6}
+    </style>
+</head>
+<body>
+<div class="panel">
+    <h1>Delete customer account</h1>
+
+    <div class="warning">
+        <strong>This is permanent.</strong> PostGuard will delete the customer's
+        account and PostGuard records owned by that account. This action cannot
+        be undone from the Admin dashboard.
+    </div>
+
+    <p class="muted">
+        Customer: <strong>{{ user["email"] }}</strong>
+    </p>
+
+    <ul>
+        <li>{{ counts["principals"] }} principal/profile record(s)</li>
+        <li>{{ counts["checks"] }} scan record(s)</li>
+        <li>{{ counts["alerts"] }} alert record(s)</li>
+        <li>{{ counts["cases"] }} case record(s)</li>
+    </ul>
+
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            {% for message in messages %}
+                <div class="flash">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    <form method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <label for="confirm_email">
+            Type the customer's email exactly to confirm
+        </label>
+        <input id="confirm_email" name="confirm_email" type="email"
+               autocomplete="off" required>
+
+        <label for="admin_password">
+            Enter your current Admin password
+        </label>
+        <input id="admin_password" name="admin_password" type="password"
+               autocomplete="current-password" required>
+
+        <div class="actions">
+            <button class="btn danger" type="submit">
+                Permanently delete customer
+            </button>
+            <a class="btn" href="{{ url_for('admin_users') }}">Cancel</a>
+        </div>
+    </form>
+</div>
+</body>
+</html>
+"""
+
+
+@app.route("/admin/users/<int:user_id>/delete", methods=["GET", "POST"])
+@admin_required
+@limiter.limit("5 per minute", methods=["POST"])
+def admin_delete_user(user_id):
+    if user_id == session.get("uid"):
+        abort(400)
+
+    c = db()
+
+    user = c.execute(
+        """
+        SELECT id, email, role
+        FROM users
+        WHERE id=?
+        """,
+        (user_id,),
+    ).fetchone()
+
+    if not user:
+        c.close()
+        abort(404)
+
+    # Admin accounts are never removable through the customer deletion flow.
+    if (user["role"] or "user") == "admin":
+        c.close()
+        abort(403)
+
+    counts = {
+        "principals": c.execute(
+            "SELECT COUNT(*) AS n FROM principals WHERE user_id=?",
+            (user_id,),
+        ).fetchone()["n"],
+        "checks": c.execute(
+            "SELECT COUNT(*) AS n FROM checks WHERE user_id=?",
+            (user_id,),
+        ).fetchone()["n"],
+        "alerts": c.execute(
+            "SELECT COUNT(*) AS n FROM alerts WHERE user_id=?",
+            (user_id,),
+        ).fetchone()["n"],
+        "cases": c.execute(
+            "SELECT COUNT(*) AS n FROM cases WHERE user_id=?",
+            (user_id,),
+        ).fetchone()["n"],
+    }
+
+    if request.method == "POST":
+        confirm_email = request.form.get("confirm_email", "").strip().lower()
+        admin_password = request.form.get("admin_password", "")
+
+        if confirm_email != user["email"].strip().lower():
+            c.close()
+            flash("The customer email confirmation did not match.")
+            return render_template_string(
+                ADMIN_DELETE_USER_PAGE,
+                user=user,
+                counts=counts,
+            ), 400
+
+        admin = c.execute(
+            """
+            SELECT id, password, role
+            FROM users
+            WHERE id=?
+            """,
+            (session["uid"],),
+        ).fetchone()
+
+        if (
+            not admin
+            or (admin["role"] or "user") != "admin"
+            or not check_password_hash(admin["password"], admin_password)
+        ):
+            c.close()
+            flash("Admin password verification failed.")
+            return render_template_string(
+                ADMIN_DELETE_USER_PAGE,
+                user=user,
+                counts=counts,
+            ), 403
+
+        # Delete child/customer-owned data first, then the account itself.
+        # No plaintext password or customer email is written to the audit log.
+        c.execute("DELETE FROM alerts WHERE user_id=?", (user_id,))
+        c.execute("DELETE FROM cases WHERE user_id=?", (user_id,))
+        c.execute("DELETE FROM checks WHERE user_id=?", (user_id,))
+        c.execute("DELETE FROM principals WHERE user_id=?", (user_id,))
+        c.execute("DELETE FROM audit WHERE user_id=?", (user_id,))
+        c.execute("DELETE FROM users WHERE id=?", (user_id,))
+        c.commit()
+        c.close()
+
+        audit("admin_delete_customer", f"deleted_user_id={user_id}")
+        flash("Customer account and PostGuard-owned customer records were deleted.")
+        return redirect(url_for("admin_users"))
+
+    c.close()
+
+    return render_template_string(
+        ADMIN_DELETE_USER_PAGE,
+        user=user,
+        counts=counts,
+    )
 
 
 @app.post("/admin/users/<int:user_id>/force-password-reset")
@@ -2331,7 +2522,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="4.7",
+        version="4.8",
     )
 
 
