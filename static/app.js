@@ -121,72 +121,115 @@ async function scan() {
 // ============================================================
 
 function openAlert(button) {
-    const id = button.dataset.id;
-    const severity = button.dataset.severity;
-    const category = button.dataset.category;
-    const principal = button.dataset.principal;
-    const detail = button.dataset.detail;
-    const recommendation = button.dataset.recommendation;
-    const score = button.dataset.score;
-    const caption = button.dataset.caption;
-    const checkId = button.dataset.checkId;
-    const status = button.dataset.status;
-    const createdAt = button.dataset.created;
+    currentAlertId = button.dataset.id;
 
-    currentAlertId = id;
+    const setText = (id, value, fallback = "Not recorded") => {
+        const element = document.getElementById(id);
 
-    document.getElementById("alertTitle").textContent =
-        category || "Alert details";
+        if (element) {
+            element.textContent =
+                value !== undefined &&
+                value !== null &&
+                value !== ""
+                    ? value
+                    : fallback;
+        }
+    };
 
-    document.getElementById("alertSeverity").textContent =
-        severity || "Unknown";
+    setText(
+        "alertTitle",
+        button.dataset.category,
+        "Alert details"
+    );
 
-    document.getElementById("alertScore").textContent =
-        score ? `${score}/100` : "Not recorded";
+    setText(
+        "alertSeverity",
+        button.dataset.severity,
+        "Unknown"
+    );
 
-    document.getElementById("alertPrincipal").textContent =
-        principal || "Unassigned";
+    setText(
+        "alertPrincipal",
+        button.dataset.principal,
+        "Unassigned"
+    );
 
-    document.getElementById("alertCheckId").textContent =
-        checkId || "Not recorded";
+    setText(
+        "alertStatus",
+        button.dataset.status,
+        "Unknown"
+    );
 
-    document.getElementById("alertCaption").textContent =
-        caption || "Not recorded.";
+    setText(
+        "alertCreated",
+        button.dataset.created,
+        "Unknown"
+    );
 
-    document.getElementById("alertStatus").textContent =
-        status || "Unknown";
+    setText(
+        "alertDetail",
+        button.dataset.detail,
+        "No detail recorded."
+    );
 
-    document.getElementById("alertCreated").textContent =
-        createdAt || "Unknown";
+    setText(
+        "alertRecommendation",
+        button.dataset.recommendation,
+        "No recommendation recorded."
+    );
 
-    document.getElementById("alertDetail").textContent =
-        detail || "No detail recorded.";
+    setText(
+        "alertCaption",
+        button.dataset.caption,
+        "Not recorded."
+    );
 
-    document.getElementById("alertRecommendation").textContent =
-        recommendation || "No recommendation recorded.";
+    setText(
+        "alertCheckId",
+        button.dataset.checkId,
+        "Not recorded"
+    );
+
+    const scoreElement =
+        document.getElementById("alertScore");
+
+    if (scoreElement) {
+        scoreElement.textContent =
+            button.dataset.score
+                ? `${button.dataset.score}/100`
+                : "Not recorded";
+    }
 
     const closeButton =
         document.getElementById("alertCloseButton");
 
-    if (status === "Open" || status === "In Case") {
-        closeButton.style.display = "inline-block";
-    } else {
-        closeButton.style.display = "none";
+    if (closeButton) {
+        closeButton.style.display =
+            button.dataset.status === "Closed"
+                ? "none"
+                : "inline-block";
     }
 
     const caseButton =
         document.getElementById("alertCaseButton");
 
-    if (status === "Open") {
-        caseButton.style.display = "inline-block";
-        caseButton.disabled = false;
-        caseButton.textContent = "Create Case";
-    } else {
-        caseButton.style.display = "none";
+    if (caseButton) {
+        if (button.dataset.status === "Open") {
+            caseButton.style.display = "inline-block";
+            caseButton.disabled = false;
+            caseButton.textContent = "Create Case";
+        } else {
+            caseButton.style.display = "none";
+        }
     }
 
     const modal =
         document.getElementById("alertModal");
+
+    if (!modal) {
+        alert("Alert window is missing from app.html.");
+        return;
+    }
 
     modal.style.display = "flex";
 }
