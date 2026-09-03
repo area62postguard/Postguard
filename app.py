@@ -878,6 +878,14 @@ def scan():
 
         risk_level = risk(score)
 
+        # A critical protective-security finding must never be
+        # downgraded simply because the numeric score is below 80.
+        if any(
+            finding.get("severity") == "CRITICAL"
+            for finding in findings
+        ):
+            risk_level = "CRITICAL"
+
         c = db()
 
         try:
