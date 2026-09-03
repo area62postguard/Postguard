@@ -258,6 +258,8 @@ def init():
     ensure_column("checks", "user_id", "INTEGER")
     ensure_column("alerts", "user_id", "INTEGER")
     ensure_column("cases", "user_id", "INTEGER")
+    ensure_column("users", "enabled", "INTEGER DEFAULT 1")
+    c.execute("UPDATE users SET enabled=1 WHERE enabled IS NULL")
 
     admin_row = c.execute(
         """
@@ -366,6 +368,23 @@ def auth(f):
         if "uid" not in session:
             return redirect(url_for("login"))
 
+        c = db()
+        account = c.execute(
+            "SELECT role, enabled FROM users WHERE id=?",
+            (session["uid"],),
+        ).fetchone()
+        c.close()
+
+        if not account:
+            session.clear()
+            return redirect(url_for("login"))
+
+        if account["enabled"] == 0 and account["role"] != "admin":
+            session.clear()
+            flash("This PostGuard account has been disabled by an administrator.")
+            return redirect(url_for("login"))
+
+        session["role"] = account["role"] or "user"
         return f(*args, **kwargs)
 
     return wrapped
@@ -1033,6 +1052,11 @@ def login():
             user["password"],
             password,
         ):
+            if user["enabled"] == 0:
+                c.close()
+                flash("This PostGuard account has been disabled by an administrator.")
+                return render_template("login.html"), 403
+
             configured_admin_email = os.getenv(
                 "POSTGUARD_ADMIN_EMAIL",
                 "",
@@ -2037,236 +2061,78 @@ def audit_api():
 
 # ============================================================
 # ADMIN USER MANAGEMENT
-# Admin-only account overview. Password hashes are never exposed.
 # ============================================================
 
 ADMIN_USERS_PAGE = """
-<!doctype html>
-<html lang="en">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>PostGuard Admin · Users</title>
-    <style>
-        :root { color-scheme: dark; }
-        * { box-sizing: border-box; }
-        body {
-            margin: 0;
-            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            background: #0b1020;
-            color: #f5f7fb;
-        }
-        header {
-            padding: 20px 28px;
-            border-bottom: 1px solid #26314a;
-            display: flex;
-            gap: 16px;
-            align-items: center;
-            justify-content: space-between;
-            flex-wrap: wrap;
-        }
-        header h1 { margin: 0; font-size: 1.4rem; }
-        .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-        .button {
-            display: inline-block;
-            padding: 10px 14px;
-            border: 1px solid #394762;
-            border-radius: 10px;
-            text-decoration: none;
-            background: #151c2f;
-            color: inherit;
-        }
-        main { padding: 28px; }
-        .summary {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 14px;
-            margin-bottom: 22px;
-        }
-        .card {
-            background: #151c2f;
-            border: 1px solid #26314a;
-            border-radius: 14px;
-            padding: 16px;
-        }
-        .number { font-size: 1.8rem; font-weight: 800; margin-top: 6px; }
-        .muted { color: #aeb9ce; }
-        .table-wrap {
-            overflow-x: auto;
-            border: 1px solid #26314a;
-            border-radius: 14px;
-            background: #151c2f;
-        }
-        table { width: 100%; border-collapse: collapse; min-width: 900px; }
-        th, td {
-            text-align: left;
-            padding: 13px 14px;
-            border-bottom: 1px solid #26314a;
-            vertical-align: top;
-        }
-        th {
-            color: #aeb9ce;
-            font-size: .82rem;
-            text-transform: uppercase;
-            letter-spacing: .04em;
-        }
-        tr:last-child td { border-bottom: 0; }
-        .role {
-            display: inline-block;
-            padding: 4px 8px;
-            border: 1px solid #3b4965;
-            border-radius: 999px;
-            font-size: .8rem;
-            text-transform: uppercase;
-            letter-spacing: .04em;
-        }
-        .admin { font-weight: 800; }
-        .note { margin-top: 18px; color: #aeb9ce; line-height: 1.5; }
-    </style>
-</head>
-<body>
-<header>
-    <div>
-        <h1>PostGuard Admin · Registered Users</h1>
-        <div class="muted">
-            Signed in as {{ session.get("email") }}
-            {% if session.get("role") == "admin" %} · ADMIN{% endif %}
-        </div>
-    </div>
-    <div class="actions">
-        <a class="button" href="{{ url_for('home') }}">Dashboard</a>
-        <form method="post" action="{{ url_for('logout') }}" style="margin:0">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="button" type="submit">Sign out</button>
-        </form>
-    </div>
-</header>
-
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PostGuard Admin · Users</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;font-family:system-ui,sans-serif;background:#0b1020;color:#f5f7fb}header,main{padding:24px 28px}header{border-bottom:1px solid #26314a;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}.muted{color:#aeb9ce}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:22px}.card,.table{background:#151c2f;border:1px solid #26314a;border-radius:14px}.card{padding:16px}.num{font-size:1.8rem;font-weight:800;margin-top:6px}.table{overflow-x:auto}table{width:100%;border-collapse:collapse;min-width:1100px}th,td{padding:12px 14px;text-align:left;border-bottom:1px solid #26314a}th{color:#aeb9ce;font-size:.8rem;text-transform:uppercase}.btn{display:inline-block;padding:8px 11px;border:1px solid #394762;border-radius:8px;background:#151c2f;color:inherit;text-decoration:none;cursor:pointer}.danger{border-color:#7b3540}.success{border-color:#356747}.pill{display:inline-block;padding:4px 8px;border:1px solid #3b4965;border-radius:999px;font-size:.75rem;text-transform:uppercase}.disabled{opacity:.6}.inline{display:inline;margin:0}
+</style></head><body>
+<header><div><h1>PostGuard Admin · Registered Users</h1><div class="muted">{{ session.get("email") }} · ADMIN</div></div><div><a class="btn" href="{{ url_for('home') }}">Dashboard</a></div></header>
 <main>
-    <section class="summary">
-        <div class="card">
-            <div class="muted">Registered accounts</div>
-            <div class="number">{{ users|length }}</div>
-        </div>
-        <div class="card">
-            <div class="muted">Customer accounts</div>
-            <div class="number">{{ customer_count }}</div>
-        </div>
-        <div class="card">
-            <div class="muted">Admin accounts</div>
-            <div class="number">{{ admin_count }}</div>
-        </div>
-    </section>
-
-    <div class="table-wrap">
-        <table>
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>Email</th>
-                    <th>Role</th>
-                    <th>Registered</th>
-                    <th>Principals</th>
-                    <th>Scans</th>
-                    <th>Alerts</th>
-                    <th>Cases</th>
-                    <th>Last activity</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for user in users %}
-                <tr>
-                    <td>{{ user["id"] }}</td>
-                    <td class="{% if user['role'] == 'admin' %}admin{% endif %}">
-                        {{ user["email"] }}
-                    </td>
-                    <td><span class="role">{{ user["role"] or "user" }}</span></td>
-                    <td>{{ user["created_at"] or "—" }}</td>
-                    <td>{{ user["principal_count"] }}</td>
-                    <td>{{ user["check_count"] }}</td>
-                    <td>{{ user["alert_count"] }}</td>
-                    <td>{{ user["case_count"] }}</td>
-                    <td>{{ user["last_activity"] or "No activity recorded" }}</td>
-                </tr>
-                {% else %}
-                <tr><td colspan="9">No registered users found.</td></tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-
-    <p class="note">
-        Passwords are not shown here. PostGuard stores password hashes and this
-        page deliberately never retrieves them.
-    </p>
-</main>
-</body>
-</html>
+<div class="cards"><div class="card"><div class="muted">Registered</div><div class="num">{{ users|length }}</div></div><div class="card"><div class="muted">Customers</div><div class="num">{{ customer_count }}</div></div><div class="card"><div class="muted">Disabled</div><div class="num">{{ disabled_count }}</div></div><div class="card"><div class="muted">Admins</div><div class="num">{{ admin_count }}</div></div></div>
+<div class="table"><table><thead><tr><th>ID</th><th>Email</th><th>Role</th><th>Status</th><th>Registered</th><th>Scans</th><th>Alerts</th><th>Cases</th><th>Controls</th></tr></thead><tbody>
+{% for user in users %}<tr class="{% if user['enabled']==0 %}disabled{% endif %}"><td>{{ user['id'] }}</td><td>{{ user['email'] }}</td><td><span class="pill">{{ user['role'] or 'user' }}</span></td><td><span class="pill">{{ 'Enabled' if user['enabled'] != 0 else 'Disabled' }}</span></td><td>{{ user['created_at'] or '—' }}</td><td>{{ user['check_count'] }}</td><td>{{ user['alert_count'] }}</td><td>{{ user['case_count'] }}</td><td>{% if user['role'] != 'admin' %}<a class="btn" href="{{ url_for('admin_user_detail',user_id=user['id']) }}">View</a> {% if user['enabled']==0 %}<form class="inline" method="post" action="{{ url_for('admin_enable_user',user_id=user['id']) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn success">Enable</button></form>{% else %}<form class="inline" method="post" action="{{ url_for('admin_disable_user',user_id=user['id']) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn danger" onclick="return confirm('Disable this customer account?')">Disable</button></form>{% endif %}{% else %}<span class="muted">Protected admin</span>{% endif %}</td></tr>{% else %}<tr><td colspan="9">No users found.</td></tr>{% endfor %}
+</tbody></table></div><p class="muted">Passwords are never displayed. Disabling a customer blocks login and invalidates their active session on its next request.</p></main></body></html>
 """
 
+ADMIN_USER_DETAIL_PAGE = """
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PostGuard Admin · Customer</title><style>:root{color-scheme:dark}body{margin:0;font-family:system-ui,sans-serif;background:#0b1020;color:#f5f7fb}header,main{padding:24px 28px}header{border-bottom:1px solid #26314a}.muted{color:#aeb9ce}.btn{display:inline-block;padding:8px 11px;border:1px solid #394762;border-radius:8px;background:#151c2f;color:inherit;text-decoration:none}.table{overflow-x:auto;background:#151c2f;border:1px solid #26314a;border-radius:14px;margin:12px 0 24px}table{width:100%;border-collapse:collapse;min-width:720px}th,td{padding:11px 13px;text-align:left;border-bottom:1px solid #26314a}th{color:#aeb9ce;font-size:.8rem;text-transform:uppercase}</style></head><body>
+<header><a class="btn" href="{{ url_for('admin_users') }}">← Registered Users</a><h1>{{ user['email'] }}</h1><div class="muted">{{ user['role'] or 'user' }} · {{ 'Enabled' if user['enabled'] != 0 else 'Disabled' }} · Registered {{ user['created_at'] or '—' }}</div></header><main>
+<h2>Recent scans</h2><div class="table"><table><thead><tr><th>ID</th><th>Risk</th><th>Score</th><th>Caption</th><th>Created</th></tr></thead><tbody>{% for r in checks %}<tr><td>{{ r['id'] }}</td><td>{{ r['risk'] }}</td><td>{{ r['score'] }}</td><td>{{ r['caption'] or '—' }}</td><td>{{ r['created_at'] }}</td></tr>{% else %}<tr><td colspan="5">No scans.</td></tr>{% endfor %}</tbody></table></div>
+<h2>Alerts</h2><div class="table"><table><thead><tr><th>ID</th><th>Severity</th><th>Category</th><th>Status</th><th>Created</th></tr></thead><tbody>{% for r in alerts %}<tr><td>{{ r['id'] }}</td><td>{{ r['severity'] }}</td><td>{{ r['category'] }}</td><td>{{ r['status'] }}</td><td>{{ r['created_at'] }}</td></tr>{% else %}<tr><td colspan="5">No alerts.</td></tr>{% endfor %}</tbody></table></div>
+<h2>Cases</h2><div class="table"><table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Owner</th><th>Created</th></tr></thead><tbody>{% for r in cases %}<tr><td>{{ r['id'] }}</td><td>{{ r['title'] }}</td><td>{{ r['status'] }}</td><td>{{ r['owner'] or '—' }}</td><td>{{ r['created_at'] }}</td></tr>{% else %}<tr><td colspan="5">No cases.</td></tr>{% endfor %}</tbody></table></div>
+</main></body></html>
+"""
 
 @app.get("/admin/users")
 @admin_required
 def admin_users():
-    c = db()
-
-    users = c.execute(
-        """
-        SELECT
-            u.id,
-            u.email,
-            u.role,
-            u.created_at,
-            (
-                SELECT COUNT(*)
-                FROM principals p
-                WHERE p.user_id = u.id
-            ) AS principal_count,
-            (
-                SELECT COUNT(*)
-                FROM checks ch
-                WHERE ch.user_id = u.id
-            ) AS check_count,
-            (
-                SELECT COUNT(*)
-                FROM alerts a
-                WHERE a.user_id = u.id
-            ) AS alert_count,
-            (
-                SELECT COUNT(*)
-                FROM cases ca
-                WHERE ca.user_id = u.id
-            ) AS case_count,
-            (
-                SELECT MAX(au.created_at)
-                FROM audit au
-                WHERE au.user_id = u.id
-            ) AS last_activity
-        FROM users u
-        ORDER BY
-            CASE WHEN u.role='admin' THEN 0 ELSE 1 END,
-            u.id ASC
-        """
-    ).fetchall()
-
+    c=db()
+    users=c.execute("""
+        SELECT u.id,u.email,u.role,u.enabled,u.created_at,
+        (SELECT COUNT(*) FROM checks ch WHERE ch.user_id=u.id) AS check_count,
+        (SELECT COUNT(*) FROM alerts a WHERE a.user_id=u.id) AS alert_count,
+        (SELECT COUNT(*) FROM cases ca WHERE ca.user_id=u.id) AS case_count
+        FROM users u ORDER BY CASE WHEN u.role='admin' THEN 0 ELSE 1 END,u.id
+    """).fetchall()
     c.close()
+    admin_count=sum((u["role"] or "user")=="admin" for u in users)
+    customer_count=sum((u["role"] or "user")!="admin" for u in users)
+    disabled_count=sum((u["role"] or "user")!="admin" and u["enabled"]==0 for u in users)
+    return render_template_string(ADMIN_USERS_PAGE,users=users,admin_count=admin_count,customer_count=customer_count,disabled_count=disabled_count)
 
-    admin_count = sum(
-        (user["role"] or "user") == "admin"
-        for user in users
-    )
+@app.post("/admin/users/<int:user_id>/disable")
+@admin_required
+def admin_disable_user(user_id):
+    if user_id==session.get("uid"): abort(400)
+    c=db(); user=c.execute("SELECT id,role FROM users WHERE id=?",(user_id,)).fetchone()
+    if not user: c.close(); abort(404)
+    if user["role"]=="admin": c.close(); abort(403)
+    c.execute("UPDATE users SET enabled=0 WHERE id=?",(user_id,)); c.commit(); c.close()
+    audit("admin_disable_user",f"user_id={user_id}")
+    return redirect(url_for("admin_users"))
 
-    customer_count = sum(
-        (user["role"] or "user") != "admin"
-        for user in users
-    )
+@app.post("/admin/users/<int:user_id>/enable")
+@admin_required
+def admin_enable_user(user_id):
+    c=db(); user=c.execute("SELECT id,role FROM users WHERE id=?",(user_id,)).fetchone()
+    if not user: c.close(); abort(404)
+    if user["role"]=="admin": c.close(); abort(403)
+    c.execute("UPDATE users SET enabled=1 WHERE id=?",(user_id,)); c.commit(); c.close()
+    audit("admin_enable_user",f"user_id={user_id}")
+    return redirect(url_for("admin_users"))
 
-    return render_template_string(
-        ADMIN_USERS_PAGE,
-        users=users,
-        admin_count=admin_count,
-        customer_count=customer_count,
-    )
+@app.get("/admin/users/<int:user_id>")
+@admin_required
+def admin_user_detail(user_id):
+    c=db(); user=c.execute("SELECT id,email,role,enabled,created_at FROM users WHERE id=?",(user_id,)).fetchone()
+    if not user: c.close(); abort(404)
+    checks=c.execute("SELECT * FROM checks WHERE user_id=? ORDER BY id DESC LIMIT 100",(user_id,)).fetchall()
+    alerts=c.execute("SELECT * FROM alerts WHERE user_id=? ORDER BY id DESC LIMIT 100",(user_id,)).fetchall()
+    cases=c.execute("SELECT * FROM cases WHERE user_id=? ORDER BY id DESC LIMIT 100",(user_id,)).fetchall()
+    c.close()
+    return render_template_string(ADMIN_USER_DETAIL_PAGE,user=user,checks=checks,alerts=alerts,cases=cases)
 
 
 # ============================================================
@@ -2278,7 +2144,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="4.5",
+        version="4.6",
     )
 
 
