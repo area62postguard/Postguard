@@ -10,6 +10,11 @@ const names = {
 
 let currentAlertId = null;
 
+
+// ============================================================
+// NAVIGATION
+// ============================================================
+
 function show(id, el) {
     document.querySelectorAll(".page").forEach(x => {
         x.classList.remove("active");
@@ -104,7 +109,7 @@ async function scan() {
         </div>
     `).join("");
 
-    // Keep the completed scan visible for 10 seconds.
+    // Keep the completed result visible for 10 seconds.
     setTimeout(() => {
         location.reload();
     }, 10000);
@@ -122,6 +127,9 @@ function openAlert(button) {
     const principal = button.dataset.principal;
     const detail = button.dataset.detail;
     const recommendation = button.dataset.recommendation;
+    const score = button.dataset.score;
+    const caption = button.dataset.caption;
+    const checkId = button.dataset.checkId;
     const status = button.dataset.status;
     const createdAt = button.dataset.created;
 
@@ -133,8 +141,17 @@ function openAlert(button) {
     document.getElementById("alertSeverity").textContent =
         severity || "Unknown";
 
+    document.getElementById("alertScore").textContent =
+        score ? `${score}/100` : "Not recorded";
+
     document.getElementById("alertPrincipal").textContent =
         principal || "Unassigned";
+
+    document.getElementById("alertCheckId").textContent =
+        checkId || "Not recorded";
+
+    document.getElementById("alertCaption").textContent =
+        caption || "Not recorded.";
 
     document.getElementById("alertStatus").textContent =
         status || "Unknown";
@@ -151,10 +168,21 @@ function openAlert(button) {
     const closeButton =
         document.getElementById("alertCloseButton");
 
-    if (status === "Open") {
+    if (status === "Open" || status === "In Case") {
         closeButton.style.display = "inline-block";
     } else {
         closeButton.style.display = "none";
+    }
+
+    const caseButton =
+        document.getElementById("alertCaseButton");
+
+    if (status === "Open") {
+        caseButton.style.display = "inline-block";
+        caseButton.disabled = false;
+        caseButton.textContent = "Create Case";
+    } else {
+        caseButton.style.display = "none";
     }
 
     const modal =
@@ -175,6 +203,10 @@ function closeAlertModal() {
     }
 }
 
+
+// ============================================================
+// CLOSE ALERT
+// ============================================================
 
 async function closeCurrentAlert() {
     if (!currentAlertId) {
@@ -199,6 +231,48 @@ async function closeAlert(id) {
     if (!r.ok) {
         return alert("Could not close alert.");
     }
+
+    location.reload();
+}
+
+
+// ============================================================
+// CREATE CASE FROM ALERT
+// ============================================================
+
+async function createCaseFromAlert() {
+    if (!currentAlertId) {
+        return;
+    }
+
+    const button =
+        document.getElementById("alertCaseButton");
+
+    button.disabled = true;
+    button.textContent = "Creating case...";
+
+    const r = await fetch(
+        "/api/alerts/" + currentAlertId + "/case",
+        {
+            method: "POST",
+            headers: {
+                "X-CSRFToken": window.POSTGUARD_CSRF
+            }
+        }
+    );
+
+    const d = await r.json();
+
+    if (!r.ok) {
+        button.disabled = false;
+        button.textContent = "Create Case";
+
+        return alert(
+            d.error || "Could not create case."
+        );
+    }
+
+    alert("Case created successfully.");
 
     location.reload();
 }
