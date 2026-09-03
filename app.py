@@ -1123,32 +1123,201 @@ def logout():
 # DASHBOARD
 # ============================================================
 
+
+CUSTOMER_DASHBOARD_PAGE = """
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PostGuard · Dashboard</title>
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#09101d;color:#f5f7fb}
+a{color:inherit}
+.shell{display:grid;grid-template-columns:240px 1fr;min-height:100vh}
+.sidebar{background:#0d1525;border-right:1px solid #22304a;padding:24px 18px}
+.brand{font-size:1.25rem;font-weight:800;letter-spacing:.03em;margin-bottom:28px}
+.brand span{color:#8cb4ff}
+.nav{display:grid;gap:8px}
+.nav a{padding:11px 12px;border-radius:10px;text-decoration:none;color:#c9d3e5}
+.nav a:hover,.nav .active{background:#17233a;color:#fff}
+.main{padding:28px}
+.topbar{display:flex;justify-content:space-between;gap:18px;align-items:center;flex-wrap:wrap;margin-bottom:26px}
+.eyebrow{color:#8ea0ba;font-size:.85rem;text-transform:uppercase;letter-spacing:.08em}
+h1{margin:.2rem 0 0;font-size:2rem}
+.actions{display:flex;gap:10px;flex-wrap:wrap}
+.btn{display:inline-block;padding:11px 15px;border-radius:10px;border:1px solid #31415e;background:#151f33;color:#fff;text-decoration:none;cursor:pointer}
+.btn.primary{background:#f5f7fb;color:#0b1020;border-color:#f5f7fb;font-weight:750}
+.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:22px}
+.card{background:#111a2b;border:1px solid #22304a;border-radius:16px;padding:18px}
+.metric{font-size:1.8rem;font-weight:800;margin-top:7px}
+.muted{color:#95a4ba}
+.risk{font-weight:800}
+.section-grid{display:grid;grid-template-columns:1.25fr .75fr;gap:18px;margin-bottom:18px}
+.panel{background:#111a2b;border:1px solid #22304a;border-radius:16px;padding:18px;min-width:0}
+.panel h2{margin:0 0 14px;font-size:1.05rem}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:11px 9px;border-bottom:1px solid #22304a;font-size:.92rem;vertical-align:top}
+th{color:#8ea0ba;font-size:.76rem;text-transform:uppercase;letter-spacing:.05em}
+tr:last-child td{border-bottom:0}
+.pill{display:inline-block;padding:4px 8px;border:1px solid #40506c;border-radius:999px;font-size:.74rem;font-weight:700}
+.empty{padding:22px 0;color:#95a4ba}
+.quick{display:grid;gap:10px}
+.quick a{display:block;text-decoration:none;border:1px solid #2b3b59;border-radius:12px;padding:14px;background:#0d1525}
+.quick strong{display:block;margin-bottom:4px}
+.alert-item{padding:12px 0;border-bottom:1px solid #22304a}
+.alert-item:last-child{border-bottom:0}
+@media(max-width:980px){.shell{grid-template-columns:1fr}.sidebar{display:none}.cards{grid-template-columns:repeat(2,1fr)}.section-grid{grid-template-columns:1fr}}
+@media(max-width:600px){.main{padding:18px}.cards{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="shell">
+<aside class="sidebar">
+    <div class="brand">POST<span>GUARD</span></div>
+    <nav class="nav">
+        <a class="active" href="{{ url_for('home') }}">Dashboard</a>
+        <a href="{{ url_for('scanner') if 'scanner' in current_app.view_functions else '#' }}">Check a Post</a>
+        <a href="{{ url_for('alerts') if 'alerts' in current_app.view_functions else '#' }}">Alerts</a>
+        <a href="{{ url_for('cases') if 'cases' in current_app.view_functions else '#' }}">Cases</a>
+        <a href="{{ url_for('account') }}">My Account</a>
+    </nav>
+</aside>
+
+<main class="main">
+    <div class="topbar">
+        <div>
+            <div class="eyebrow">Personal security dashboard</div>
+            <h1>Protect what you post.</h1>
+            <div class="muted">Review your recent exposure, alerts and post checks.</div>
+        </div>
+        <div class="actions">
+            <a class="btn" href="{{ url_for('account') }}">My Account</a>
+            <a class="btn primary" href="{{ url_for('scanner') if 'scanner' in current_app.view_functions else '#' }}">Check a Post</a>
+        </div>
+    </div>
+
+    <section class="cards">
+        <div class="card">
+            <div class="muted">Current risk</div>
+            <div class="metric risk">{{ current_risk }}</div>
+            <div class="muted">Latest score: {{ current_score }}/100</div>
+        </div>
+        <div class="card">
+            <div class="muted">Posts checked</div>
+            <div class="metric">{{ scan_count }}</div>
+        </div>
+        <div class="card">
+            <div class="muted">Active alerts</div>
+            <div class="metric">{{ alert_count }}</div>
+        </div>
+        <div class="card">
+            <div class="muted">Cases</div>
+            <div class="metric">{{ case_count }}</div>
+        </div>
+    </section>
+
+    <section class="section-grid">
+        <div class="panel">
+            <h2>Recent post checks</h2>
+            {% if recent_checks %}
+            <table>
+                <thead><tr><th>Risk</th><th>Score</th><th>Caption</th><th>Created</th></tr></thead>
+                <tbody>
+                {% for row in recent_checks %}
+                <tr>
+                    <td><span class="pill">{{ row["risk"] }}</span></td>
+                    <td>{{ row["score"] }}/100</td>
+                    <td>{{ row["caption"] or "Image / metadata check" }}</td>
+                    <td>{{ row["created_at"] }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty">No posts checked yet. Use <strong>Check a Post</strong> to run your first assessment.</div>
+            {% endif %}
+        </div>
+
+        <div class="panel">
+            <h2>Quick actions</h2>
+            <div class="quick">
+                <a href="{{ url_for('scanner') if 'scanner' in current_app.view_functions else '#' }}">
+                    <strong>Check a Post</strong>
+                    <span class="muted">Scan a caption or image before publishing.</span>
+                </a>
+                <a href="{{ url_for('alerts') if 'alerts' in current_app.view_functions else '#' }}">
+                    <strong>Review Alerts</strong>
+                    <span class="muted">See exposure that needs attention.</span>
+                </a>
+                <a href="{{ url_for('account') }}">
+                    <strong>Account Security</strong>
+                    <span class="muted">Change your password or manage your account.</span>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <section class="section-grid">
+        <div class="panel">
+            <h2>Active alerts</h2>
+            {% if active_alerts %}
+                {% for row in active_alerts %}
+                <div class="alert-item">
+                    <strong>{{ row["severity"] }} · {{ row["category"] }}</strong>
+                    <div class="muted">{{ row["status"] }} · {{ row["created_at"] }}</div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="empty">No active alerts.</div>
+            {% endif %}
+        </div>
+
+        <div class="panel">
+            <h2>Your PostGuard profile</h2>
+            {% if principals %}
+                {% for row in principals[:3] %}
+                <div class="alert-item">
+                    <strong>{{ row["name"] }}</strong>
+                    <div class="muted">{{ row["role"] or "Protected account" }} · Risk {{ row["risk"] }}</div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="empty">No profile records found.</div>
+            {% endif %}
+        </div>
+    </section>
+</main>
+</div>
+</body>
+</html>
+"""
+
+
 @app.get("/")
 @auth
 def home():
     c = db()
 
     is_admin = session.get("role") == "admin"
-    uid = session["uid"]
 
     if is_admin:
         principals = c.execute(
             """
             SELECT *
             FROM principals
-            ORDER BY risk DESC
+            ORDER BY id DESC
             """
         ).fetchall()
 
         alerts = c.execute(
             """
-            SELECT
-                a.*,
-                p.name AS principal
-            FROM alerts a
-            LEFT JOIN principals p
-                ON p.id = a.principal_id
-            ORDER BY a.id DESC
+            SELECT *
+            FROM alerts
+            ORDER BY id DESC
+            LIMIT 20
             """
         ).fetchall()
 
@@ -1157,92 +1326,113 @@ def home():
             SELECT *
             FROM cases
             ORDER BY id DESC
+            LIMIT 20
             """
         ).fetchall()
 
-        sources = c.execute(
-            "SELECT * FROM sources"
-        ).fetchall()
-
-        check_count = c.execute(
-            "SELECT COUNT(*) AS n FROM checks"
-        ).fetchone()["n"]
-
-    else:
-        principals = c.execute(
+        checks = c.execute(
             """
             SELECT *
-            FROM principals
-            WHERE user_id=?
-            ORDER BY risk DESC
-            """,
-            (uid,),
-        ).fetchall()
-
-        alerts = c.execute(
-            """
-            SELECT
-                a.*,
-                p.name AS principal
-            FROM alerts a
-            LEFT JOIN principals p
-                ON p.id = a.principal_id
-            WHERE a.user_id=?
-            ORDER BY a.id DESC
-            """,
-            (uid,),
-        ).fetchall()
-
-        cases = c.execute(
-            """
-            SELECT *
-            FROM cases
-            WHERE user_id=?
-            ORDER BY id DESC
-            """,
-            (uid,),
-        ).fetchall()
-
-        sources = []
-
-        check_count = c.execute(
-            """
-            SELECT COUNT(*) AS n
             FROM checks
-            WHERE user_id=?
-            """,
-            (uid,),
-        ).fetchone()["n"]
+            ORDER BY id DESC
+            LIMIT 20
+            """
+        ).fetchall()
 
-    stats = {
-        "principals": len(principals),
-        "alerts": sum(
-            alert["status"] == "Open"
-            for alert in alerts
-        ),
-        "checks": check_count,
-        "cases": sum(
-            case["status"] == "Open"
-            for case in cases
-        ),
-    }
+        c.close()
+
+        return render_template(
+            "app.html",
+            principals=principals,
+            alerts=alerts,
+            cases=cases,
+            checks=checks,
+        )
+
+    uid = session["uid"]
+
+    principals = c.execute(
+        """
+        SELECT *
+        FROM principals
+        WHERE user_id=?
+        ORDER BY id DESC
+        """,
+        (uid,),
+    ).fetchall()
+
+    recent_checks = c.execute(
+        """
+        SELECT *
+        FROM checks
+        WHERE user_id=?
+        ORDER BY id DESC
+        LIMIT 8
+        """,
+        (uid,),
+    ).fetchall()
+
+    active_alerts = c.execute(
+        """
+        SELECT *
+        FROM alerts
+        WHERE user_id=?
+          AND COALESCE(status, '') NOT IN ('Closed', 'Resolved')
+        ORDER BY id DESC
+        LIMIT 8
+        """,
+        (uid,),
+    ).fetchall()
+
+    recent_cases = c.execute(
+        """
+        SELECT *
+        FROM cases
+        WHERE user_id=?
+        ORDER BY id DESC
+        LIMIT 6
+        """,
+        (uid,),
+    ).fetchall()
+
+    scan_count = c.execute(
+        "SELECT COUNT(*) AS n FROM checks WHERE user_id=?",
+        (uid,),
+    ).fetchone()["n"]
+
+    alert_count = c.execute(
+        """
+        SELECT COUNT(*) AS n
+        FROM alerts
+        WHERE user_id=?
+          AND COALESCE(status, '') NOT IN ('Closed', 'Resolved')
+        """,
+        (uid,),
+    ).fetchone()["n"]
+
+    case_count = c.execute(
+        "SELECT COUNT(*) AS n FROM cases WHERE user_id=?",
+        (uid,),
+    ).fetchone()["n"]
+
+    latest = recent_checks[0] if recent_checks else None
+    current_risk = latest["risk"] if latest else "LOW"
+    current_score = latest["score"] if latest else 0
 
     c.close()
 
-    return render_template(
-        "app.html",
+    return render_template_string(
+        CUSTOMER_DASHBOARD_PAGE,
         principals=principals,
-        alerts=alerts,
-        cases=cases,
-        sources=sources,
-        stats=stats,
-        is_admin=is_admin,
+        recent_checks=recent_checks,
+        active_alerts=active_alerts,
+        recent_cases=recent_cases,
+        scan_count=scan_count,
+        alert_count=alert_count,
+        case_count=case_count,
+        current_risk=current_risk,
+        current_score=current_score,
     )
-
-
-# ============================================================
-# PRINCIPAL PROFILE / RECORD
-# ============================================================
 
 @app.get("/principals/<int:principal_id>")
 @auth
@@ -2637,7 +2827,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="4.9",
+        version="5.0",
     )
 
 
