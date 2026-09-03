@@ -1275,10 +1275,10 @@ tr:last-child td{border-bottom:0}
             <h2>Active alerts</h2>
             {% if active_alerts %}
                 {% for row in active_alerts %}
-                <div class="alert-item">
+                <a class="alert-item" href="{{ url_for('customer_alert_detail', alert_id=row['id']) }}" style="display:block;text-decoration:none;color:inherit">
                     <strong>{{ row["severity"] }} · {{ row["category"] }}</strong>
                     <div class="muted">{{ row["status"] }} · {{ row["created_at"] }}</div>
-                </div>
+                </a>
                 {% endfor %}
             {% else %}
                 <div class="empty">No active alerts.</div>
@@ -2678,6 +2678,184 @@ def add_principal():
     return jsonify(ok=True)
 
 
+
+CUSTOMER_ALERT_DETAIL_PAGE = """
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PostGuard · Alert</title>
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#09101d;color:#f5f7fb}
+a{color:inherit}.main{max-width:1000px;margin:auto;padding:30px 20px}
+.top{display:flex;justify-content:space-between;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:22px}
+.actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.card{background:#111a2b;border:1px solid #22304a;border-radius:16px;padding:20px;margin-bottom:16px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.metric{background:#0d1525;border:1px solid #2c3a55;border-radius:12px;padding:16px}
+.metric .value{font-size:1.2rem;font-weight:800;margin-top:5px;overflow-wrap:anywhere}
+.muted{color:#95a4ba}.danger{color:#ff8c8c}.warn{color:#f6c56f}.safe{color:#7dd3a7}
+.btn{display:inline-block;padding:10px 14px;border-radius:10px;border:1px solid #31415e;background:#151f33;color:#fff;text-decoration:none;font-weight:700;cursor:pointer}
+.finding{background:#0d1525;border:1px solid #2c3a55;border-radius:12px;padding:14px;margin-top:10px}
+.caption{white-space:pre-wrap;overflow-wrap:anywhere}
+.severity{font-size:1.35rem;font-weight:850}
+@media(max-width:700px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main class="main">
+<div class="top">
+    <div>
+        <div class="muted">PostGuard customer alert</div>
+        <h1 style="margin:.2rem 0">Alert #{{ alert['id'] }}</h1>
+    </div>
+    <div class="actions">
+        <a class="btn" href="{{ url_for('home') }}">Back to Dashboard</a>
+        <form method="post" action="{{ url_for('logout') }}" style="margin:0">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn" type="submit">Log out</button>
+        </form>
+    </div>
+</div>
+
+<section class="card">
+    {% if alert['severity'] in ('HIGH','CRITICAL') %}
+        <div class="severity danger">🔴 {{ alert['severity'] }} RISK ALERT</div>
+    {% elif alert['severity'] == 'MODERATE' %}
+        <div class="severity warn">🟠 MODERATE RISK ALERT</div>
+    {% else %}
+        <div class="severity safe">🟢 {{ alert['severity'] or 'LOW' }} RISK</div>
+    {% endif %}
+    <p class="muted">{{ alert['category'] or 'PostGuard security alert' }}</p>
+</section>
+
+<div class="grid">
+    <div class="metric"><div class="muted">Status</div><div class="value">{{ alert['status'] or 'Open' }}</div></div>
+    <div class="metric"><div class="muted">Risk score</div><div class="value">{{ alert['risk_score'] if alert['risk_score'] is not none else '—' }}</div></div>
+    <div class="metric"><div class="muted">Created</div><div class="value" style="font-size:1rem">{{ alert['created_at'] }}</div></div>
+</div>
+
+<section class="card" style="margin-top:16px">
+    <h2>Why this was flagged</h2>
+    <div>{{ alert['detail'] or 'This post triggered a PostGuard risk alert.' }}</div>
+</section>
+
+<section class="card">
+    <h2>Recommended action</h2>
+    <div>{{ alert['recommendation'] or 'Review and remove sensitive information before publishing.' }}</div>
+</section>
+
+{% if alert['caption'] %}
+<section class="card">
+    <h2>Caption that triggered the alert</h2>
+    <div class="caption">{{ alert['caption'] }}</div>
+</section>
+{% endif %}
+
+{% if check %}
+<section class="card">
+    <h2>Triggering scan</h2>
+    <div class="finding">
+        <strong>Score {{ check['score'] }}/100 · {{ check['risk'] }}</strong>
+        <div class="muted" style="margin-top:7px">Checked {{ check['created_at'] }}</div>
+        <div style="margin-top:12px">
+            <a class="btn" href="{{ url_for('scan_history_detail', check_id=check['id']) }}">Open full scan result</a>
+        </div>
+    </div>
+</section>
+
+{% if check['safer_caption'] %}
+<section class="card">
+    <h2>Safer version created</h2>
+    <div class="caption">{{ check['safer_caption'] }}</div>
+
+    {% if safer_check %}
+    <div class="finding" style="margin-top:14px">
+        <strong>Safer re-scan: {{ safer_check['score'] }}/100 · {{ safer_check['risk'] }}</strong>
+        {% if safer_check['risk'] in ('HIGH','CRITICAL') %}
+            <div class="danger" style="margin-top:7px;font-weight:800">🔴 DO NOT POST</div>
+        {% elif safer_check['risk'] == 'MODERATE' %}
+            <div class="warn" style="margin-top:7px;font-weight:800">🟠 REVIEW BEFORE POSTING</div>
+        {% else %}
+            <div class="safe" style="margin-top:7px;font-weight:800">🟢 SAFE TO POST</div>
+        {% endif %}
+    </div>
+    {% endif %}
+</section>
+{% endif %}
+{% endif %}
+
+<div class="actions">
+    <a class="btn" href="{{ url_for('check_post') }}">Check another post</a>
+    {% if check %}
+    <a class="btn" href="{{ url_for('scan_history_detail', check_id=check['id']) }}">View scan history</a>
+    {% endif %}
+</div>
+</main>
+</body>
+</html>
+"""
+
+
+@app.get("/alerts/<int:alert_id>")
+@auth
+def customer_alert_detail(alert_id):
+    c = db()
+    try:
+        if session.get("role") == "admin":
+            alert = c.execute(
+                "SELECT * FROM alerts WHERE id=?",
+                (alert_id,),
+            ).fetchone()
+        else:
+            alert = c.execute(
+                "SELECT * FROM alerts WHERE id=? AND user_id=?",
+                (alert_id, session["uid"]),
+            ).fetchone()
+
+        if not alert:
+            abort(404)
+
+        check = None
+        safer_check = None
+
+        if alert["check_id"]:
+            if session.get("role") == "admin":
+                check = c.execute(
+                    "SELECT * FROM checks WHERE id=?",
+                    (alert["check_id"],),
+                ).fetchone()
+            else:
+                check = c.execute(
+                    "SELECT * FROM checks WHERE id=? AND user_id=?",
+                    (alert["check_id"], session["uid"]),
+                ).fetchone()
+
+        if check and check["safer_check_id"]:
+            if session.get("role") == "admin":
+                safer_check = c.execute(
+                    "SELECT * FROM checks WHERE id=?",
+                    (check["safer_check_id"],),
+                ).fetchone()
+            else:
+                safer_check = c.execute(
+                    "SELECT * FROM checks WHERE id=? AND user_id=?",
+                    (check["safer_check_id"], session["uid"]),
+                ).fetchone()
+    finally:
+        c.close()
+
+    return render_template_string(
+        CUSTOMER_ALERT_DETAIL_PAGE,
+        alert=alert,
+        check=check,
+        safer_check=safer_check,
+    )
+
+
 # ============================================================
 # ALERTS
 # ============================================================
@@ -3577,7 +3755,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="5.7",
+        version="5.8",
     )
 
 
