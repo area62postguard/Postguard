@@ -1713,7 +1713,15 @@ textarea.field{min-height:180px;resize:vertical}
                     <div class="muted" id="summary">PostGuard will explain any privacy or security exposure detected.</div>
                 </div>
             </div>
+            <div id="decision" class="finding" style="display:none;margin-bottom:14px"></div>
             <div id="findings"></div>
+            <div id="saferBox" class="finding" style="display:none;margin-top:16px">
+                <strong>Safer caption suggestion</strong>
+                <div id="saferCaption" style="margin-top:8px"></div>
+                <div class="actions">
+                    <button type="button" class="btn secondary" id="copySafer">Copy safer caption</button>
+                </div>
+            </div>
         </section>
     </div>
 </main>
@@ -1727,6 +1735,10 @@ const scoreEl = document.getElementById("score");
 const riskEl = document.getElementById("risk");
 const summaryEl = document.getElementById("summary");
 const findingsEl = document.getElementById("findings");
+const decisionEl = document.getElementById("decision");
+const saferBox = document.getElementById("saferBox");
+const saferCaptionEl = document.getElementById("saferCaption");
+const copySafer = document.getElementById("copySafer");
 const button = document.getElementById("scanButton");
 
 imageInput.addEventListener("change", () => {
@@ -1772,23 +1784,42 @@ form.addEventListener("submit", async (event) => {
 
         if (risk === "HIGH" || risk === "CRITICAL") {
             summaryEl.textContent = "PostGuard recommends that you do not publish this post yet.";
+            decisionEl.innerHTML = "<strong>🔴 DO NOT POST</strong><div class=\"muted\" style=\"margin-top:6px\">Remove the sensitive information identified below and scan the post again.</div>";
         } else if (risk === "MODERATE") {
             summaryEl.textContent = "Review the findings before publishing.";
+            decisionEl.innerHTML = "<strong>🟠 REVIEW BEFORE POSTING</strong><div class=\"muted\" style=\"margin-top:6px\">Consider the recommendations below before you publish.</div>";
         } else {
             summaryEl.textContent = "No major exposure was detected by the current PostGuard checks.";
+            decisionEl.innerHTML = "<strong>🟢 SAFE TO POST</strong><div class=\"muted\" style=\"margin-top:6px\">No major risk was detected by the current PostGuard checks.</div>";
         }
+        decisionEl.style.display = "block";
 
         const findings = data.findings || [];
         if (!findings.length) {
             findingsEl.innerHTML = '<div class="finding"><strong>No findings</strong><span class="muted">No specific risk rules were triggered.</span></div>';
+            saferBox.style.display = "none";
         } else {
             findingsEl.innerHTML = findings.map(f => `
                 <div class="finding">
                     <strong>${escapeHtml(f.category || f.title || "Security finding")}</strong>
                     <div>${escapeHtml(f.detail || "")}</div>
-                    <div class="muted" style="margin-top:7px">${escapeHtml(f.recommendation || "")}</div>
+                    <div class="muted" style="margin-top:7px"><b>Recommended action:</b> ${escapeHtml(f.recommendation || "")}</div>
                 </div>
             `).join("");
+
+            const original = document.getElementById("caption").value.trim();
+            let safer = original;
+            const sensitivePatterns = [
+                /\b(gate code|entry code|alarm code|passcode|password|pin)\s*(is|:)?\s*[A-Za-z0-9-]+/gi,
+                /\b(i am at|i'm at|currently at|here at|just arrived at|right now at|live from)\b[^.!?]*/gi,
+                /\b(address|postcode|post code|house number)\s*(is|:)?\s*[^,.!?]+/gi
+            ];
+            sensitivePatterns.forEach(pattern => { safer = safer.replace(pattern, "[sensitive detail removed]"); });
+            if (safer === original && (risk === "HIGH" || risk === "CRITICAL")) {
+                safer = "Sharing an update — keeping private security, location and personal details offline.";
+            }
+            saferCaptionEl.textContent = safer || "Share the update without private location, security, family, travel or access details.";
+            saferBox.style.display = "block";
         }
     } catch (error) {
         scoreEl.textContent = "--";
@@ -1798,6 +1829,16 @@ form.addEventListener("submit", async (event) => {
     } finally {
         button.disabled = false;
         button.textContent = "Run PostGuard Check";
+    }
+});
+
+copySafer.addEventListener("click", async () => {
+    try {
+        await navigator.clipboard.writeText(saferCaptionEl.textContent);
+        copySafer.textContent = "Copied";
+        setTimeout(() => { copySafer.textContent = "Copy safer caption"; }, 1200);
+    } catch (_) {
+        copySafer.textContent = "Select and copy the caption";
     }
 });
 
@@ -3059,7 +3100,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="5.1",
+        version="5.2",
     )
 
 
