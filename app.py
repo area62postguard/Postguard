@@ -1713,7 +1713,10 @@ textarea.field{min-height:180px;resize:vertical}
                     <div class="muted" id="summary">PostGuard will explain any privacy or security exposure detected.</div>
                 </div>
             </div>
-            <div id="decision" class="finding" style="display:none;margin-bottom:14px"></div>
+            <div id="decision" class="finding" style="margin-bottom:14px;border-width:2px">
+                <strong id="decisionTitle">AWAITING DECISION</strong>
+                <div class="muted" id="decisionText" style="margin-top:6px">Run the PostGuard check to get a clear publishing decision.</div>
+            </div>
             <div id="findings"></div>
             <div id="saferBox" class="finding" style="display:none;margin-top:16px">
                 <strong>Safer caption suggestion</strong>
@@ -1736,6 +1739,8 @@ const riskEl = document.getElementById("risk");
 const summaryEl = document.getElementById("summary");
 const findingsEl = document.getElementById("findings");
 const decisionEl = document.getElementById("decision");
+const decisionTitle = document.getElementById("decisionTitle");
+const decisionText = document.getElementById("decisionText");
 const saferBox = document.getElementById("saferBox");
 const saferCaptionEl = document.getElementById("saferCaption");
 const copySafer = document.getElementById("copySafer");
@@ -1757,7 +1762,12 @@ form.addEventListener("submit", async (event) => {
     button.disabled = true;
     button.textContent = "Scanning...";
     findingsEl.innerHTML = "";
+    saferBox.style.display = "none";
     summaryEl.textContent = "Analysing your post...";
+    decisionTitle.textContent = "CHECKING POST...";
+    decisionText.textContent = "PostGuard is analysing the proposed post.";
+    decisionEl.style.borderColor = "#40506c";
+    decisionEl.style.background = "#0d1525";
 
     try {
         const response = await fetch("/api/scan", {
@@ -1783,16 +1793,24 @@ form.addEventListener("submit", async (event) => {
         );
 
         if (risk === "HIGH" || risk === "CRITICAL") {
-            summaryEl.textContent = "PostGuard recommends that you do not publish this post yet.";
-            decisionEl.innerHTML = "<strong>🔴 DO NOT POST</strong><div class=\"muted\" style=\"margin-top:6px\">Remove the sensitive information identified below and scan the post again.</div>";
+            summaryEl.textContent = "PostGuard recommends that you do not publish this post.";
+            decisionTitle.textContent = "🔴 DO NOT POST";
+            decisionText.textContent = "Sensitive information was detected. Remove the items listed below and scan the post again before publishing.";
+            decisionEl.style.borderColor = "#ff5f5f";
+            decisionEl.style.background = "rgba(180,35,35,.14)";
         } else if (risk === "MODERATE") {
             summaryEl.textContent = "Review the findings before publishing.";
-            decisionEl.innerHTML = "<strong>🟠 REVIEW BEFORE POSTING</strong><div class=\"muted\" style=\"margin-top:6px\">Consider the recommendations below before you publish.</div>";
+            decisionTitle.textContent = "🟠 REVIEW BEFORE POSTING";
+            decisionText.textContent = "PostGuard found information worth reviewing. Check the recommendations below before publishing.";
+            decisionEl.style.borderColor = "#d79b3d";
+            decisionEl.style.background = "rgba(180,120,20,.12)";
         } else {
             summaryEl.textContent = "No major exposure was detected by the current PostGuard checks.";
-            decisionEl.innerHTML = "<strong>🟢 SAFE TO POST</strong><div class=\"muted\" style=\"margin-top:6px\">No major risk was detected by the current PostGuard checks.</div>";
+            decisionTitle.textContent = "🟢 SAFE TO POST";
+            decisionText.textContent = "No major security or privacy exposure was detected by the current PostGuard checks.";
+            decisionEl.style.borderColor = "#4caf7d";
+            decisionEl.style.background = "rgba(35,145,90,.12)";
         }
-        decisionEl.style.display = "block";
 
         const findings = data.findings || [];
         if (!findings.length) {
@@ -1826,6 +1844,10 @@ form.addEventListener("submit", async (event) => {
         riskEl.textContent = "Scan failed";
         riskEl.className = "status danger";
         summaryEl.textContent = error.message;
+        decisionTitle.textContent = "SCAN COULD NOT COMPLETE";
+        decisionText.textContent = error.message;
+        decisionEl.style.borderColor = "#ff5f5f";
+        decisionEl.style.background = "rgba(180,35,35,.14)";
     } finally {
         button.disabled = false;
         button.textContent = "Run PostGuard Check";
@@ -3100,7 +3122,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="5.2",
+        version="5.2.1",
     )
 
 
