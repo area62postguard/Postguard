@@ -1870,7 +1870,7 @@ form.addEventListener("submit", async (event) => {
                 </div>
             `).join("");
 
-            saferCaptionEl.textContent = "Click Create Safer Post to generate a safer version of your post.";
+            saferCaptionEl.textContent = "Click Create Safer Post to keep the meaning of your post while removing risky details.";
             saferBox.style.display = "block";
         }
     } catch (error) {
@@ -2172,33 +2172,111 @@ def scan_history_detail(check_id):
 
 
 def create_safer_caption(caption):
-    """Create a conservative privacy-safe rewrite without external AI."""
+    """
+    Create a safer rewrite that preserves the user's intended message
+    while removing sensitive location, access, security and personal details.
+    """
     original = (caption or "").strip()
+    if not original:
+        return ""
+
     safer = original
 
-    patterns = [
-        (r"\b(gate code|entry code|alarm code|passcode|password|pin)\s*(is|:)?\s*[A-Za-z0-9-]+", ""),
-        (r"\b(my|our)\s+(home|house|address)\s+(is|at)\s+[^,.!?]+", ""),
-        (r"\b(i am at|i'm at|currently at|here at|just arrived at|right now at|live from)\b[^.!?]*", ""),
-        (r"\b(address|postcode|post code|house number)\s*(is|:)?\s*[^,.!?]+", ""),
-        (r"\b(leaving|flying|travelling|traveling|going)\s+(today|tomorrow|tonight)\b[^.!?]*", ""),
-        (r"\b(security|bodyguard|guard|alarm|camera|cctv)\b[^.!?]*", ""),
+    # Replace specific sensitive details with natural, context-preserving wording.
+    replacements = [
+        # Access/security codes.
+        (
+            r"\b(the\s+)?(gate code|entry code|alarm code|passcode|password|pin)\s*(is|:)?\s*[A-Za-z0-9-]+\b",
+            ""
+        ),
+
+        # Exact home/address disclosures.
+        (
+            r"\b(my|our)\s+(home|house|address)\s+(is|at)\s+[^,.!?]+",
+            "I'm at home"
+        ),
+        (
+            r"\b(address|postcode|post code|house number)\s*(is|:)?\s*[^,.!?]+",
+            ""
+        ),
+
+        # Live-location phrasing: preserve the update but remove the live location.
+        (
+            r"\b(i am at|i'm at|currently at|here at|just arrived at|right now at|live from)\s+[^,.!?]+",
+            "I'm enjoying the day"
+        ),
+
+        # Travel timing: remove precise timing while keeping the travel message.
+        (
+            r"\b(i'?m|we'?re|i am|we are)\s+(leaving|flying|travelling|traveling|going)\s+(today|tomorrow|tonight)\b",
+            r"\1 looking forward to the trip"
+        ),
+        (
+            r"\b(leaving|flying|travelling|traveling|going)\s+(today|tomorrow|tonight)\b",
+            "looking forward to the trip"
+        ),
+
+        # Security arrangements.
+        (
+            r"\b(my|our)\s+(security|bodyguard|guard|security team)\s+(is|are)\s+[^,.!?]+",
+            ""
+        ),
+        (
+            r"\b(alarm|camera|cctv)\s+(is|are)\s+(off|disabled|broken|not working)\b",
+            ""
+        ),
     ]
 
-    for pattern, replacement in patterns:
+    for pattern, replacement in replacements:
         safer = re.sub(pattern, replacement, safer, flags=re.I)
 
+    # Remove obvious long numeric codes that remain near risky words.
+    safer = re.sub(
+        r"\b(code|pin|passcode|password)\b[^.!?]{0,15}\b\d{3,10}\b",
+        "",
+        safer,
+        flags=re.I,
+    )
+
+    # Clean punctuation and whitespace.
     safer = re.sub(r"\s{2,}", " ", safer)
     safer = re.sub(r"\s+([,.!?])", r"\1", safer)
+    safer = re.sub(r"([.!?]){2,}", r"\1", safer)
     safer = safer.strip(" \t\r\n,.;:-")
 
-    # If the sanitised result is empty or effectively unchanged, provide
-    # a neutral safe rewrite rather than leaving the risky text in place.
-    if not safer or len(safer) < 8 or safer.lower() == original.lower():
-        safer = (
-            "Sharing an update while keeping private location, security, "
-            "family and access details offline."
-        )
+    # Improve a few common fragments after redaction.
+    safer = re.sub(r"\bI'm home now\b", "Home and relaxing now", safer, flags=re.I)
+    safer = re.sub(r"\bI am home now\b", "Home and relaxing now", safer, flags=re.I)
+    safer = re.sub(r"\bwe're home now\b", "Home and relaxing now", safer, flags=re.I)
+
+    # If only a fragment remains, create a natural rewrite using the context.
+    if len(safer) < 8:
+        lower = original.lower()
+
+        if any(word in lower for word in ("home", "house", "gate", "alarm")):
+            safer = "Home and relaxing now — keeping the security details private."
+        elif any(word in lower for word in ("holiday", "trip", "flight", "airport", "travel")):
+            safer = "Looking forward to the trip — I'll share more once we're back."
+        elif any(word in lower for word in ("concert", "stadium", "restaurant", "hotel", "venue")):
+            safer = "Having a great time today — sharing the details after I leave."
+        else:
+            safer = "Sharing an update while keeping private details offline."
+
+    # If the risky caption survived substantially unchanged, return a
+    # context-aware alternative rather than a generic warning sentence.
+    if safer.lower() == original.lower():
+        lower = original.lower()
+
+        if any(word in lower for word in ("home", "house", "gate", "alarm", "security")):
+            safer = "Home and relaxing now — keeping the security details private."
+        elif any(word in lower for word in ("holiday", "trip", "flight", "airport", "travel")):
+            safer = "Looking forward to the trip — I'll share the details afterwards."
+        elif any(word in lower for word in ("family", "children", "kids", "school")):
+            safer = "Lovely family time today — keeping the personal details private."
+        elif any(word in lower for word in ("car", "vehicle", "number plate", "registration")):
+            safer = "Great day out — keeping the vehicle details private."
+        else:
+            safer = "Sharing an update while keeping private details offline."
 
     return safer
 
@@ -3499,7 +3577,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="5.6",
+        version="5.7",
     )
 
 
