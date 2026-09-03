@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>{{ principal.name }} · PostGuard</title>
+    <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="shell">
+    <aside class="sidebar">
+        <div class="brand">POSTGUARD</div>
+
+        <div class="nav">
+            <a href="/">← Intelligence Centre</a>
+        </div>
+
+        <div style="margin-top:28px">
+            <div class="muted">Principal record</div>
+            <h3 style="margin:6px 0">{{ principal.name }}</h3>
+            <div class="muted">{{ principal.role }}</div>
+        </div>
+    </aside>
+
+    <main class="main">
+        <header class="topbar">
+            <div>
+                <div class="muted">Principal Security Record</div>
+                <h1>{{ principal.name }}</h1>
+            </div>
+
+            <form method="post" action="/logout">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="logout-link">
+                    Sign out · {{ session.email }}
+                </button>
+            </form>
+        </header>
+
+        <section class="page active">
+            <div class="grid">
+                <div class="card">
+                    <div class="muted">Current risk score</div>
+                    <div style="font-size:46px;font-weight:800;margin-top:6px">
+                        {{ principal.risk }}/100
+                    </div>
+                    <div class="muted">
+                        Updated from the principal's most recent PostGuard scan.
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="muted">Recorded scans</div>
+                    <div style="font-size:46px;font-weight:800;margin-top:6px">
+                        {{ checks|length }}
+                    </div>
+                    <div class="muted">Most recent 100 scans shown below.</div>
+                </div>
+
+                <div class="card">
+                    <div class="muted">Security alerts</div>
+                    <div style="font-size:46px;font-weight:800;margin-top:6px">
+                        {{ alerts|length }}
+                    </div>
+                    <div class="muted">Alerts linked to this principal.</div>
+                </div>
+            </div>
+
+            <div class="card" style="margin-top:20px">
+                <h2>Secure Publish Centre</h2>
+                <p class="muted">
+                    Draft the post here. PostGuard checks it before any
+                    authorised social-media publishing connection is used.
+                </p>
+
+                <label>Social network</label>
+                <select id="publishPlatform">
+                    <option value="instagram">Instagram</option>
+                    <option value="facebook">Facebook</option>
+                    <option value="x">X</option>
+                    <option value="linkedin">LinkedIn</option>
+                    <option value="tiktok">TikTok</option>
+                </select>
+
+                <label style="margin-top:14px">Caption</label>
+                <textarea
+                    id="publishCaption"
+                    rows="6"
+                    placeholder="Write the proposed caption..."
+                ></textarea>
+
+                <label style="margin-top:14px">Image</label>
+                <input
+                    id="publishImage"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                >
+
+                <div style="margin-top:16px">
+                    <button
+                        type="button"
+                        class="btn"
+                        onclick="publishPrincipalPost({{ principal.id }})"
+                    >
+                        Check &amp; Publish
+                    </button>
+                </div>
+
+                <div
+                    id="publishResult"
+                    class="finding"
+                    style="display:none;margin-top:16px"
+                ></div>
+
+                <p class="muted" style="margin-top:14px">
+                    Real posting requires the principal to connect each
+                    account through that platform's official authorised login.
+                    PostGuard will never publish HIGH or CRITICAL content.
+                </p>
+            </div>
+
+            <div class="card" style="margin-top:20px">
+                <h2>Scan History</h2>
+
+                {% if checks %}
+                <table>
+                    <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Risk</th>
+                        <th>Score</th>
+                        <th>Caption</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    {% for check in checks %}
+                    <tr>
+                        <td>{{ check.created_at }}</td>
+                        <td>{{ check.risk }}</td>
+                        <td>{{ check.score }}/100</td>
+                        <td>{{ check.caption or "No caption recorded" }}</td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p class="muted">No scans recorded for this principal yet.</p>
+                {% endif %}
+            </div>
+
+            <div class="card" style="margin-top:20px">
+                <h2>Alert History</h2>
+
+                {% if alerts %}
+                <table>
+                    <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Severity</th>
+                        <th>Category</th>
+                        <th>Status</th>
+                        <th>Finding</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    {% for alert in alerts %}
+                    <tr>
+                        <td>{{ alert.created_at }}</td>
+                        <td>{{ alert.severity }}</td>
+                        <td>{{ alert.category }}</td>
+                        <td>{{ alert.status }}</td>
+                        <td>{{ alert.detail }}</td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p class="muted">No alerts recorded for this principal.</p>
+                {% endif %}
+            </div>
+        </section>
+    </main>
+</div>
+
+<script>
+    window.POSTGUARD_CSRF = "{{ csrf_token() }}";
+</script>
+<script src="/static/app.js"></script>
+</body>
+</html>
