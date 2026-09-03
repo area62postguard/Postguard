@@ -1,0 +1,397 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>PostGuard Intelligence</title>
+    <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+
+<aside>
+    <div class="brand">POST<span>GUARD</span></div>
+    <div class="nav">
+        <a class="active" onclick="show('dashboard',this)">Dashboard</a>
+        <a onclick="show('scanner',this)">AI Post Scanner</a>
+        <a onclick="show('alerts',this)">Alerts</a>
+        <a onclick="show('cases',this)">Cases</a>
+        <a onclick="show('people',this)">Principals</a>
+        <a onclick="show('monitoring',this)">Monitoring</a>
+        <a onclick="show('audit',this)">Audit Log</a>
+    </div>
+</aside>
+
+<main>
+    <header class="top">
+        <b id="crumb">PostGuard Intelligence Centre</b>
+
+        <form method="post" action="/logout" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="logout-link">
+                Sign out · {{ session.email }}
+            </button>
+        </form>
+    </header>
+
+    <div class="wrap">
+
+        <section id="dashboard" class="page active">
+            <div class="heading">
+                <div>
+                    <h1>PostGuard Intelligence Centre</h1>
+                    <p>Pre-publication protection and authorised monitoring.</p>
+                </div>
+                <button class="btn" onclick="show('scanner')">Scan a Post</button>
+            </div>
+
+            <div class="grid">
+                <div class="card">
+                    <div class="muted">Open alerts</div>
+                    <div class="metric red">{{stats.alerts}}</div>
+                    <div class="muted">Priority review</div>
+                </div>
+
+                <div class="card">
+                    <div class="muted">Open cases</div>
+                    <div class="metric">{{stats.cases}}</div>
+                    <div class="muted">Response workflow</div>
+                </div>
+
+                <div class="card">
+                    <div class="muted">Posts scanned</div>
+                    <div class="metric">{{stats.checks}}</div>
+                    <div class="muted">This installation</div>
+                </div>
+
+                <div class="card">
+                    <div class="muted">Protected principals</div>
+                    <div class="metric">{{stats.principals}}</div>
+                    <div class="muted">Active profiles</div>
+                </div>
+            </div>
+
+            <div class="layout">
+                <div class="card">
+                    <h3>How the intelligence engine works</h3>
+                    <div class="flow">
+                        <span>IMAGE</span>
+                        <i>→</i>
+                        <span>METADATA</span>
+                        <i>→</i>
+                        <span>VISION/OCR*</span>
+                        <i>→</i>
+                        <span>CAPTION</span>
+                        <i>→</i>
+                        <span>RISK</span>
+                    </div>
+                    <p class="muted">
+                        *The current build has an offline metadata layer and a clearly separated hook for a production vision/OCR provider.
+                    </p>
+                </div>
+
+                <div class="card">
+                    <h3>Security posture</h3>
+                    <p><b class="green">Authorised monitoring only</b></p>
+                    <p class="muted">No private-account bypassing, covert surveillance or restricted scraping.</p>
+                    <p><b>Explainable scoring</b></p>
+                    <p class="muted">Every finding contains a reason and recommended action.</p>
+                </div>
+            </div>
+        </section>
+
+        <section id="scanner" class="page">
+            <div class="heading">
+                <div>
+                    <h1>AI Post Scanner</h1>
+                    <p>Check an image and caption before publication.</p>
+                </div>
+            </div>
+
+            <div class="checker">
+                <div>
+                    <select id="principal" class="field">
+                        <option value="">Select principal</option>
+                        {% for p in principals %}
+                        <option value="{{p.id}}">{{p.name}}</option>
+                        {% endfor %}
+                    </select>
+
+                    <label class="drop" id="drop">
+                        <div>
+                            <b id="dropText">Upload image</b>
+                            <p class="muted">JPG, PNG or WEBP · up to 20 MB</p>
+                            <input id="image" type="file" accept="image/*">
+                            <img id="preview" class="preview">
+                        </div>
+                    </label>
+
+                    <textarea
+                        id="caption"
+                        class="field caption"
+                        placeholder="Paste proposed caption..."
+                    ></textarea>
+
+                    <button class="btn" onclick="scan()">
+                        Run PostGuard Analysis
+                    </button>
+                </div>
+
+                <div class="result">
+                    <div class="score">
+                        <div class="circle" id="score">--</div>
+
+                        <div>
+                            <h2 id="risk">Awaiting scan</h2>
+                            <p class="muted" id="summary">
+                                PostGuard will explain every detected exposure.
+                            </p>
+                        </div>
+                    </div>
+
+                    <div id="findings"></div>
+                </div>
+            </div>
+        </section>
+
+        <section id="alerts" class="page">
+            <div class="heading">
+                <div>
+                    <h1>Alert Queue</h1>
+                    <p>Prioritised security findings.</p>
+                </div>
+            </div>
+
+            <div class="card">
+                <table class="table">
+                    <tr>
+                        <th>Severity</th>
+                        <th>Category</th>
+                        <th>Principal</th>
+                        <th>Finding</th>
+                        <th>Status</th>
+                        <th></th>
+                    </tr>
+
+                    {% for a in alerts %}
+                    <tr>
+                        <td>
+                            <span class="pill {{'med' if a.severity=='MEDIUM' else 'low' if a.severity=='LOW' else ''}}">
+                                {{a.severity}}
+                            </span>
+                        </td>
+                        <td>{{a.category}}</td>
+                        <td>{{a.principal or 'Unassigned'}}</td>
+                        <td>{{a.detail}}</td>
+                        <td>{{a.status}}</td>
+                        <td>
+                            <button
+                                class="btn alt"
+                                type="button"
+                                onclick="openAlert(
+                                    {{ a.id }},
+                                    {{ (a.severity or '')|tojson }},
+                                    {{ (a.category or '')|tojson }},
+                                    {{ (a.principal or 'Unassigned')|tojson }},
+                                    {{ (a.detail or '')|tojson }},
+                                    {{ (a.recommendation or '')|tojson }},
+                                    {{ (a.status or '')|tojson }},
+                                    {{ (a.created_at or '')|tojson }}
+                                )"
+                            >
+                                Open
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </table>
+            </div>
+
+            <div
+                id="alertModal"
+                style="
+                    display:none;
+                    position:fixed;
+                    inset:0;
+                    background:rgba(0,0,0,.6);
+                    z-index:1000;
+                    align-items:center;
+                    justify-content:center;
+                    padding:24px;
+                "
+            >
+                <div
+                    class="card"
+                    style="
+                        width:min(720px,100%);
+                        max-height:90vh;
+                        overflow:auto;
+                        position:relative;
+                    "
+                >
+                    <button
+                        type="button"
+                        class="btn alt"
+                        onclick="closeAlertModal()"
+                        style="position:absolute;right:18px;top:18px"
+                    >
+                        Close
+                    </button>
+
+                    <h2 id="alertTitle">Alert details</h2>
+
+                    <div style="margin-top:20px">
+                        <p><b>Severity:</b> <span id="alertSeverity"></span></p>
+                        <p><b>Principal:</b> <span id="alertPrincipal"></span></p>
+                        <p><b>Status:</b> <span id="alertStatus"></span></p>
+                        <p><b>Created:</b> <span id="alertCreated"></span></p>
+                    </div>
+
+                    <div class="finding" style="margin-top:18px">
+                        <b>Finding</b>
+                        <span class="muted" id="alertDetail"></span>
+                    </div>
+
+                    <div class="finding" style="margin-top:12px">
+                        <b>Recommended action</b>
+                        <span class="muted" id="alertRecommendation"></span>
+                    </div>
+
+                    <div style="margin-top:18px">
+                        <button
+                            id="alertCloseButton"
+                            type="button"
+                            class="btn"
+                            onclick="closeCurrentAlert()"
+                        >
+                            Close Alert
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="cases" class="page">
+            <div class="heading">
+                <div>
+                    <h1>Case Management</h1>
+                    <p>Convert alerts into tracked response work.</p>
+                </div>
+
+                <button class="btn" onclick="newCase()">New Case</button>
+            </div>
+
+            <div class="card">
+                <table class="table">
+                    <tr>
+                        <th>Case</th>
+                        <th>Status</th>
+                        <th>Owner</th>
+                        <th>Created</th>
+                        <th></th>
+                    </tr>
+
+                    {% for x in cases %}
+                    <tr>
+                        <td>{{x.title}}</td>
+                        <td>{{x.status}}</td>
+                        <td>{{x.owner}}</td>
+                        <td>{{x.created_at}}</td>
+                        <td>
+                            {% if x.status=="Open" %}
+                            <button class="btn alt" onclick="closeCase({{x.id}})">
+                                Close
+                            </button>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </table>
+            </div>
+        </section>
+
+        <section id="people" class="page">
+            <div class="heading">
+                <div>
+                    <h1>Principals</h1>
+                    <p>Protected people and their exposure profiles.</p>
+                </div>
+
+                <button class="btn" onclick="addPrincipal()">Add Principal</button>
+            </div>
+
+            <div class="card">
+                <table class="table">
+                    <tr>
+                        <th>Name</th>
+                        <th>Role</th>
+                        <th>Risk</th>
+                    </tr>
+
+                    {% for p in principals %}
+                    <tr>
+                        <td>{{p.name}}</td>
+                        <td>{{p.role}}</td>
+                        <td class="{{'red' if p.risk>=60 else 'amber' if p.risk>=40 else 'green'}}">
+                            <b>{{p.risk}}/100</b>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </table>
+            </div>
+        </section>
+
+        <section id="monitoring" class="page">
+            <div class="heading">
+                <div>
+                    <h1>Authorised Monitoring</h1>
+                    <p>Connect public/authorised data sources through compliant APIs.</p>
+                </div>
+
+                <button class="btn" onclick="addSource()">Add Source</button>
+            </div>
+
+            <div class="grid">
+                {% for s in sources %}
+                <div class="card">
+                    <h3>{{s.name}}</h3>
+                    <div class="muted">{{s.kind}}</div>
+                    <p><b>{{s.status}}</b></p>
+                    <p class="muted">{{s.notes}}</p>
+                </div>
+                {% endfor %}
+            </div>
+
+            <div class="card" style="margin-top:18px">
+                <h3>Production connector targets</h3>
+                <p class="muted">
+                    Official social APIs · licensed social listening · domain/brand monitoring · public web intelligence · breach notification providers. Credentials should be stored in a secrets manager, not in the application database.
+                </p>
+            </div>
+        </section>
+
+        <section id="audit" class="page">
+            <div class="heading">
+                <div>
+                    <h1>Audit Log</h1>
+                    <p>Traceable security workspace activity.</p>
+                </div>
+
+                <button class="btn alt" onclick="loadAudit()">Refresh</button>
+            </div>
+
+            <div class="card">
+                <pre id="auditBox">Loading...</pre>
+            </div>
+        </section>
+
+    </div>
+</main>
+
+<script>
+    window.POSTGUARD_CSRF = "{{ csrf_token() }}";
+</script>
+
+<script src="/static/app.js"></script>
+
+</body>
+</html>
