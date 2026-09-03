@@ -900,6 +900,19 @@ def scan():
         ),
     )
 
+    if principal_id:
+        c.execute(
+            """
+            UPDATE principals
+            SET risk=?
+            WHERE id=?
+            """,
+            (
+                score,
+                principal_id,
+            ),
+        )
+
     if risk_level in ("HIGH", "CRITICAL"):
         top_finding = findings[0] if findings else {
             "category": "High-risk post",
