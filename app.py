@@ -1341,12 +1341,20 @@ def home():
 
         c.close()
 
+        stats = {
+            "principals": len(principals),
+            "alerts": len(alerts),
+            "cases": len(cases),
+            "checks": len(checks),
+        }
+
         return render_template(
             "app.html",
             principals=principals,
             alerts=alerts,
             cases=cases,
             checks=checks,
+            stats=stats,
         )
 
     uid = session["uid"]
@@ -2827,7 +2835,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="5.0.1",
+        version="5.0.2",
     )
 
 
