@@ -11,10 +11,15 @@ const names = {
 let currentAlertId = null;
 
 function show(id, el) {
-    document.querySelectorAll(".page").forEach(x => x.classList.remove("active"));
+    document.querySelectorAll(".page").forEach(x => {
+        x.classList.remove("active");
+    });
+
     document.getElementById(id).classList.add("active");
 
-    document.querySelectorAll(".nav a").forEach(x => x.classList.remove("active"));
+    document.querySelectorAll(".nav a").forEach(x => {
+        x.classList.remove("active");
+    });
 
     if (el) {
         el.classList.add("active");
@@ -26,6 +31,11 @@ function show(id, el) {
         loadAudit();
     }
 }
+
+
+// ============================================================
+// IMAGE UPLOAD
+// ============================================================
 
 const image = document.getElementById("image");
 const preview = document.getElementById("preview");
@@ -41,6 +51,11 @@ image.onchange = () => {
         dropText.style.display = "none";
     }
 };
+
+
+// ============================================================
+// POST SCANNER
+// ============================================================
 
 async function scan() {
     const fd = new FormData();
@@ -77,7 +92,11 @@ async function scan() {
     findings.innerHTML = d.findings.map(f => `
         <div class="finding">
             <b>${f.severity} · ${f.category}</b>
-            <span class="muted">${f.detail}</span>
+
+            <span class="muted">
+                ${f.detail}
+            </span>
+
             <div class="recommend">
                 <b>Recommended action</b>
                 ${f.recommendation}
@@ -95,16 +114,16 @@ async function scan() {
 // ALERT DETAILS
 // ============================================================
 
-function openAlert(
-    id,
-    severity,
-    category,
-    principal,
-    detail,
-    recommendation,
-    status,
-    createdAt
-) {
+function openAlert(button) {
+    const id = button.dataset.id;
+    const severity = button.dataset.severity;
+    const category = button.dataset.category;
+    const principal = button.dataset.principal;
+    const detail = button.dataset.detail;
+    const recommendation = button.dataset.recommendation;
+    const status = button.dataset.status;
+    const createdAt = button.dataset.created;
+
     currentAlertId = id;
 
     document.getElementById("alertTitle").textContent =
@@ -147,8 +166,12 @@ function openAlert(
 function closeAlertModal() {
     currentAlertId = null;
 
-    document.getElementById("alertModal").style.display =
-        "none";
+    const modal =
+        document.getElementById("alertModal");
+
+    if (modal) {
+        modal.style.display = "none";
+    }
 }
 
 
@@ -305,11 +328,8 @@ async function loadAudit() {
 // KEYBOARD CONTROLS
 // ============================================================
 
-document.addEventListener(
-    "keydown",
-    event => {
-        if (event.key === "Escape") {
-            closeAlertModal();
-        }
+document.addEventListener("keydown", event => {
+    if (event.key === "Escape") {
+        closeAlertModal();
     }
-);
+});
