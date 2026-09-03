@@ -171,6 +171,7 @@ def init():
             id INTEGER PRIMARY KEY,
             principal_id INTEGER,
             filename TEXT,
+            caption TEXT,
             score INTEGER,
             risk TEXT,
             findings TEXT,
@@ -180,6 +181,9 @@ def init():
         CREATE TABLE IF NOT EXISTS alerts(
             id INTEGER PRIMARY KEY,
             principal_id INTEGER,
+            check_id INTEGER,
+            risk_score INTEGER,
+            caption TEXT,
             severity TEXT,
             category TEXT,
             detail TEXT,
@@ -215,6 +219,35 @@ def init():
         );
         """
     )
+
+    # Add newer columns safely for existing SQLite/PostgreSQL databases.
+    def ensure_column(table, column, definition):
+        if c.postgres:
+            c.execute(
+                f"ALTER TABLE {table} "
+                f"ADD COLUMN IF NOT EXISTS {column} {definition}"
+            )
+            return
+
+        columns = c.execute(
+            f"PRAGMA table_info({table})"
+        ).fetchall()
+
+        existing = {
+            row["name"]
+            for row in columns
+        }
+
+        if column not in existing:
+            c.execute(
+                f"ALTER TABLE {table} "
+                f"ADD COLUMN {column} {definition}"
+            )
+
+    ensure_column("checks", "caption", "TEXT")
+    ensure_column("alerts", "check_id", "INTEGER")
+    ensure_column("alerts", "risk_score", "INTEGER")
+    ensure_column("alerts", "caption", "TEXT")
 
     if not c.execute(
         "SELECT 1 FROM principals LIMIT 1"
@@ -892,27 +925,32 @@ def scan():
         c = db()
 
         try:
-            c.execute(
+            check_row = c.execute(
                 """
                 INSERT INTO checks(
                     principal_id,
                     filename,
+                    caption,
                     score,
                     risk,
                     findings,
                     created_at
                 )
-                VALUES(?,?,?,?,?,?)
+                VALUES(?,?,?,?,?,?,?)
+                RETURNING id
                 """,
                 (
                     principal_id,
                     filename,
+                    caption,
                     score,
                     risk_level,
                     json.dumps(findings),
                     now(),
                 ),
-            )
+            ).fetchone()
+
+            check_id = check_row["id"]
 
             if principal_id:
                 c.execute(
@@ -954,16 +992,22 @@ def scan():
                     """
                     INSERT INTO alerts(
                         principal_id,
+                        check_id,
+                        risk_score,
+                        caption,
                         severity,
                         category,
                         detail,
                         recommendation,
                         created_at
                     )
-                    VALUES(?,?,?,?,?,?)
+                    VALUES(?,?,?,?,?,?,?,?,?)
                     """,
                     (
                         principal_id,
+                        check_id,
+                        score,
+                        caption,
                         risk_level,
                         top_finding.get("category", "High-risk post"),
                         top_finding.get(
@@ -1086,6 +1130,98 @@ def close_alert(alert_id):
     )
 
     return jsonify(ok=True)
+
+
+@app.post("/api/alerts/<int:alert_id>/case")
+@auth
+def alert_to_case(alert_id):
+    c = db()
+
+    alert = c.execute(
+        """
+        SELECT
+            a.*,
+            p.name AS principal
+        FROM alerts a
+        LEFT JOIN principals p
+            ON p.id = a.principal_id
+        WHERE a.id=?
+        """,
+        (alert_id,),
+    ).fetchone()
+
+    if not alert:
+        c.close()
+        return jsonify(error="Alert not found."), 404
+
+    if alert["status"] == "Closed":
+        c.close()
+        return jsonify(error="Closed alerts cannot be converted to cases."), 400
+
+    principal_name = alert["principal"] or "Unassigned"
+    severity = alert["severity"] or "Security"
+    category = alert["category"] or "Alert"
+
+    title = f"{severity} · {category} · {principal_name}"
+
+    notes = "\n".join([
+        f"Created from PostGuard Alert #{alert_id}.",
+        f"Principal: {principal_name}",
+        f"Risk score: {alert['risk_score'] if alert['risk_score'] is not None else 'Not recorded'}",
+        f"Scan ID: {alert['check_id'] if alert['check_id'] is not None else 'Not recorded'}",
+        "",
+        "Original caption:",
+        alert["caption"] or "Not recorded.",
+        "",
+        "Finding:",
+        alert["detail"] or "Not recorded.",
+        "",
+        "Recommended action:",
+        alert["recommendation"] or "Not recorded.",
+    ])
+
+    case_row = c.execute(
+        """
+        INSERT INTO cases(
+            title,
+            owner,
+            notes,
+            created_at
+        )
+        VALUES(?,?,?,?)
+        RETURNING id
+        """,
+        (
+            title,
+            session.get("email"),
+            notes,
+            now(),
+        ),
+    ).fetchone()
+
+    case_id = case_row["id"]
+
+    c.execute(
+        """
+        UPDATE alerts
+        SET status='In Case'
+        WHERE id=?
+        """,
+        (alert_id,),
+    )
+
+    c.commit()
+    c.close()
+
+    audit(
+        "alert_to_case",
+        f"alert={alert_id}, case={case_id}",
+    )
+
+    return jsonify(
+        ok=True,
+        case_id=case_id,
+    )
 
 
 # ============================================================
