@@ -928,11 +928,27 @@ def scan():
                 )
 
             if risk_level in ("HIGH", "CRITICAL"):
-                top_finding = findings[0] if findings else {
-                    "category": "High-risk post",
-                    "detail": "The post exceeded the configured PostGuard risk threshold.",
-                    "recommendation": "Review and remove sensitive details before publishing.",
+                severity_rank = {
+                    "CRITICAL": 4,
+                    "HIGH": 3,
+                    "MEDIUM": 2,
+                    "LOW": 1,
                 }
+
+                if findings:
+                    top_finding = max(
+                        findings,
+                        key=lambda finding: severity_rank.get(
+                            finding.get("severity"),
+                            0,
+                        ),
+                    )
+                else:
+                    top_finding = {
+                        "category": "High-risk post",
+                        "detail": "The post exceeded the configured PostGuard risk threshold.",
+                        "recommendation": "Review and remove sensitive details before publishing.",
+                    }
 
                 c.execute(
                     """
