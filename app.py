@@ -714,6 +714,296 @@ def risk(score):
 # All new registrations are normal users.
 # ============================================================
 
+
+AUTH_ENTRY_PAGE = """
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PostGuard · Protect what you post</title>
+<style>
+:root{
+    color-scheme:dark;
+    --bg:#07101d;
+    --panel:#0d1828;
+    --panel2:#111f33;
+    --line:#243754;
+    --text:#f6f8fb;
+    --muted:#9aabc2;
+    --blue:#87adff;
+    --blue2:#5f8ff4;
+    --green:#7fe0ae;
+    --danger:#ff9797;
+}
+*{box-sizing:border-box}
+html,body{min-height:100%}
+body{
+    margin:0;
+    font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    background:
+        radial-gradient(circle at 15% 12%,rgba(74,119,205,.18),transparent 30%),
+        radial-gradient(circle at 85% 82%,rgba(47,112,101,.12),transparent 30%),
+        var(--bg);
+    color:var(--text);
+}
+.page{min-height:100vh;display:grid;grid-template-columns:minmax(0,1.08fr) minmax(440px,.92fr)}
+.hero{
+    padding:54px clamp(32px,6vw,92px);
+    display:flex;
+    flex-direction:column;
+    justify-content:space-between;
+    border-right:1px solid rgba(135,173,255,.12);
+}
+.brand{display:flex;align-items:center;gap:12px;font-weight:850;letter-spacing:.02em;font-size:1.15rem}
+.logo{
+    width:38px;height:38px;border-radius:11px;
+    display:grid;place-items:center;
+    background:linear-gradient(145deg,#17345f,#0d203c);
+    border:1px solid #315787;
+    box-shadow:0 10px 30px rgba(0,0,0,.22);
+}
+.logo svg{width:22px;height:22px}
+.hero-copy{max-width:720px;margin:70px 0}
+.eyebrow{
+    color:var(--blue);font-size:.78rem;text-transform:uppercase;
+    letter-spacing:.16em;font-weight:800;margin-bottom:18px
+}
+h1{font-size:clamp(2.8rem,6vw,5.6rem);line-height:.98;letter-spacing:-.055em;margin:0 0 24px}
+.hero p{color:#bdc8d8;font-size:1.12rem;line-height:1.75;max-width:640px;margin:0}
+.points{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:34px}
+.point{
+    background:rgba(13,24,40,.7);border:1px solid rgba(99,131,181,.24);
+    padding:16px;border-radius:14px;backdrop-filter:blur(10px)
+}
+.point strong{display:block;font-size:.92rem;margin-bottom:5px}
+.point span{color:var(--muted);font-size:.8rem;line-height:1.45}
+.hero-foot{color:#72849e;font-size:.77rem}
+
+.auth-side{
+    display:flex;align-items:center;justify-content:center;
+    padding:34px;
+    background:rgba(7,13,24,.48);
+}
+.auth-card{
+    width:min(100%,480px);
+    background:linear-gradient(180deg,rgba(17,31,51,.96),rgba(11,23,39,.97));
+    border:1px solid var(--line);
+    border-radius:22px;
+    padding:28px;
+    box-shadow:0 28px 80px rgba(0,0,0,.32);
+}
+.auth-head h2{font-size:1.65rem;margin:0 0 7px;letter-spacing:-.025em}
+.auth-head p{margin:0;color:var(--muted);font-size:.92rem;line-height:1.55}
+.switch{
+    display:grid;grid-template-columns:1fr 1fr;
+    background:#091524;border:1px solid #213450;
+    padding:4px;border-radius:12px;margin:22px 0
+}
+.switch a{
+    text-decoration:none;color:#91a2ba;text-align:center;
+    padding:10px;border-radius:9px;font-size:.88rem;font-weight:750
+}
+.switch a.active{background:#172943;color:white;box-shadow:0 3px 12px rgba(0,0,0,.2)}
+.flash{
+    border:1px solid #5b3c48;background:#281923;color:#ffd4da;
+    border-radius:11px;padding:11px 13px;margin:0 0 16px;font-size:.86rem
+}
+.field{margin-top:15px}
+label{display:block;font-size:.82rem;font-weight:750;margin:0 0 7px;color:#dbe4f2}
+.input-wrap{position:relative}
+input{
+    width:100%;padding:13px 14px;border-radius:11px;
+    border:1px solid #314662;background:#091524;color:white;
+    outline:none;font:inherit
+}
+input:focus{border-color:#668ed0;box-shadow:0 0 0 3px rgba(102,142,208,.13)}
+input::placeholder{color:#61748f}
+.toggle{
+    position:absolute;right:10px;top:50%;transform:translateY(-50%);
+    background:none;border:0;color:#8da1bd;cursor:pointer;font-size:.76rem;font-weight:700
+}
+.primary{
+    width:100%;border:0;margin-top:20px;padding:13px 16px;border-radius:11px;
+    background:linear-gradient(135deg,#ecf3ff,#bcd1fa);
+    color:#07101d;font-weight:850;font-size:.92rem;cursor:pointer
+}
+.primary:hover{filter:brightness(1.03)}
+.note{color:#7589a4;font-size:.75rem;line-height:1.55;margin-top:14px}
+.security{
+    margin-top:22px;padding-top:18px;border-top:1px solid #20314b;
+    display:flex;gap:10px;align-items:flex-start;color:#8ea1bc;font-size:.78rem;line-height:1.5
+}
+.security svg{flex:0 0 auto;margin-top:1px}
+.mini-link{color:#aac6ff;text-decoration:none}
+@media(max-width:980px){
+    .page{grid-template-columns:1fr}
+    .hero{padding:32px 24px;border-right:0;border-bottom:1px solid rgba(135,173,255,.12)}
+    .hero-copy{margin:48px 0 30px}
+    h1{font-size:clamp(2.6rem,11vw,4.6rem)}
+    .points{grid-template-columns:1fr}
+    .auth-side{padding:28px 18px 48px}
+}
+</style>
+</head>
+<body>
+<div class="page">
+    <section class="hero">
+        <div class="brand">
+            <div class="logo" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                    <path d="M12 2.5 19 5.4v5.5c0 4.7-2.8 8.5-7 10.6-4.2-2.1-7-5.9-7-10.6V5.4L12 2.5Z" stroke="#b9d0ff" stroke-width="1.7"/>
+                    <path d="m8.7 12 2.1 2.1 4.7-5" stroke="#7fe0ae" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </div>
+            POSTGUARD
+        </div>
+
+        <div class="hero-copy">
+            <div class="eyebrow">Personal digital risk protection</div>
+            <h1>Protect what<br>you post.</h1>
+            <p>
+                Check social-media posts for privacy and security risks before they go live.
+                PostGuard identifies sensitive details, explains the risk and helps you create
+                a safer version before publishing.
+            </p>
+
+            <div class="points">
+                <div class="point">
+                    <strong>Pre-post risk checks</strong>
+                    <span>Review captions and images before they become public.</span>
+                </div>
+                <div class="point">
+                    <strong>Clear security decisions</strong>
+                    <span>Get simple SAFE TO POST or DO NOT POST guidance.</span>
+                </div>
+                <div class="point">
+                    <strong>Private by design</strong>
+                    <span>Your account, scans, alerts and cases remain separated from other users.</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="hero-foot">PostGuard Security · Secure access portal</div>
+    </section>
+
+    <section class="auth-side">
+        <main class="auth-card">
+            <div class="auth-head">
+                {% if mode == 'register' %}
+                    <h2>Create your PostGuard account</h2>
+                    <p>Set up secure access to your private PostGuard workspace.</p>
+                {% else %}
+                    <h2>Welcome back</h2>
+                    <p>Sign in to your PostGuard intelligence centre.</p>
+                {% endif %}
+            </div>
+
+            <nav class="switch" aria-label="Account access">
+                <a href="{{ url_for('login') }}" class="{% if mode == 'login' %}active{% endif %}">Returning user</a>
+                <a href="{{ url_for('register') }}" class="{% if mode == 'register' %}active{% endif %}">New user</a>
+            </nav>
+
+            {% with messages = get_flashed_messages() %}
+                {% if messages %}
+                    {% for message in messages %}
+                        <div class="flash">{{ message }}</div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+
+            {% if mode == 'register' %}
+            <form method="post" action="{{ url_for('register') }}" autocomplete="on">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                <div class="field">
+                    <label for="email">Email address</label>
+                    <input id="email" name="email" type="email" autocomplete="email"
+                           placeholder="you@example.com" required>
+                </div>
+
+                <div class="field">
+                    <label for="password">Create password</label>
+                    <div class="input-wrap">
+                        <input id="password" name="password" type="password"
+                               autocomplete="new-password" minlength="12"
+                               placeholder="Minimum 12 characters" required>
+                        <button class="toggle" type="button" data-target="password">SHOW</button>
+                    </div>
+                </div>
+
+                <div class="field">
+                    <label for="confirm">Confirm password</label>
+                    <div class="input-wrap">
+                        <input id="confirm" name="confirm" type="password"
+                               autocomplete="new-password" minlength="12"
+                               placeholder="Repeat your password" required>
+                        <button class="toggle" type="button" data-target="confirm">SHOW</button>
+                    </div>
+                </div>
+
+                <button class="primary" type="submit">Create secure account</button>
+                <div class="note">
+                    By creating an account, you are creating a private PostGuard workspace.
+                    Passwords are stored as secure hashes rather than readable passwords.
+                </div>
+            </form>
+            {% else %}
+            <form method="post" action="{{ url_for('login') }}" autocomplete="on">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                <div class="field">
+                    <label for="email">Email address</label>
+                    <input id="email" name="email" type="email" autocomplete="username"
+                           placeholder="you@example.com" required autofocus>
+                </div>
+
+                <div class="field">
+                    <label for="password">Password</label>
+                    <div class="input-wrap">
+                        <input id="password" name="password" type="password"
+                               autocomplete="current-password" placeholder="Your password" required>
+                        <button class="toggle" type="button" data-target="password">SHOW</button>
+                    </div>
+                </div>
+
+                <button class="primary" type="submit">Sign in securely</button>
+                <div class="note">
+                    New to PostGuard?
+                    <a class="mini-link" href="{{ url_for('register') }}">Create an account</a>.
+                    Administrators use this same secure sign-in.
+                </div>
+            </form>
+            {% endif %}
+
+            <div class="security">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <rect x="5" y="10" width="14" height="10" rx="2" stroke="#8ea1bc" stroke-width="1.7"/>
+                    <path d="M8 10V7a4 4 0 0 1 8 0v3" stroke="#8ea1bc" stroke-width="1.7"/>
+                </svg>
+                <div>
+                    Secure session protection, rate-limited authentication and CSRF protection are enabled.
+                </div>
+            </div>
+        </main>
+    </section>
+</div>
+
+<script>
+document.querySelectorAll(".toggle").forEach(function(button){
+    button.addEventListener("click", function(){
+        var input = document.getElementById(button.dataset.target);
+        var showing = input.type === "text";
+        input.type = showing ? "password" : "text";
+        button.textContent = showing ? "SHOW" : "HIDE";
+    });
+});
+</script>
+</body>
+</html>
+"""
+
+
 @app.route("/register", methods=["GET", "POST"])
 @limiter.limit("5 per minute", methods=["POST"])
 def register():
@@ -727,7 +1017,7 @@ def register():
 
         if not email:
             flash("Email address is required.")
-            return render_template("register.html")
+            return render_template_string(AUTH_ENTRY_PAGE, mode="register")
 
         email_pattern = (
             r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+"
@@ -737,19 +1027,19 @@ def register():
 
         if not re.match(email_pattern, email):
             flash("Enter a valid email address.")
-            return render_template("register.html")
+            return render_template_string(AUTH_ENTRY_PAGE, mode="register")
 
         if not password:
             flash("Password is required.")
-            return render_template("register.html")
+            return render_template_string(AUTH_ENTRY_PAGE, mode="register")
 
         if password != confirm:
             flash("Passwords do not match.")
-            return render_template("register.html")
+            return render_template_string(AUTH_ENTRY_PAGE, mode="register")
 
         if len(password) < 12:
             flash("Password must be at least 12 characters.")
-            return render_template("register.html")
+            return render_template_string(AUTH_ENTRY_PAGE, mode="register")
 
         c = db()
         existing = c.execute(
@@ -760,7 +1050,7 @@ def register():
         if existing:
             c.close()
             flash("An account with that email already exists.")
-            return render_template("register.html")
+            return render_template_string(AUTH_ENTRY_PAGE, mode="register")
 
         user = c.execute(
             """
@@ -816,7 +1106,7 @@ def register():
         )
         return redirect(url_for("login"))
 
-    return render_template("register.html")
+    return render_template_string(AUTH_ENTRY_PAGE, mode="register")
 
 
 # ============================================================
@@ -1076,7 +1366,7 @@ def login():
             if user["enabled"] == 0:
                 c.close()
                 flash("This PostGuard account has been disabled by an administrator.")
-                return render_template("login.html"), 403
+                return render_template_string(AUTH_ENTRY_PAGE, mode="login"), 403
 
             configured_admin_email = os.getenv(
                 "POSTGUARD_ADMIN_EMAIL",
@@ -1120,7 +1410,7 @@ def login():
 
         flash("Invalid credentials.")
 
-    return render_template("login.html")
+    return render_template_string(AUTH_ENTRY_PAGE, mode="login")
 
 
 @app.post("/logout")
@@ -4220,7 +4510,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="6.0",
+        version="6.1",
     )
 
 
