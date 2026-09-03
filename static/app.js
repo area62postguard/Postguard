@@ -82,6 +82,10 @@ async function scan() {
             </div>
         </div>
     `).join("");
+
+    setTimeout(() => {
+        location.reload();
+    }, 1200);
 }
 
 async function closeAlert(id) {
