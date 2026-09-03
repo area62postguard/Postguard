@@ -191,6 +191,9 @@
                                 data-principal="{{ a.principal or 'Unassigned' }}"
                                 data-detail="{{ a.detail or '' }}"
                                 data-recommendation="{{ a.recommendation or '' }}"
+                                data-score="{{ a.risk_score if a.risk_score is not none else '' }}"
+                                data-caption="{{ a.caption or '' }}"
+                                data-check-id="{{ a.check_id if a.check_id is not none else '' }}"
                                 data-status="{{ a.status or '' }}"
                                 data-created="{{ a.created_at or '' }}"
                                 onclick="openAlert(this)"
@@ -238,12 +241,19 @@
 
                     <div style="margin-top:20px">
                         <p><b>Severity:</b> <span id="alertSeverity"></span></p>
+                        <p><b>Risk score:</b> <span id="alertScore"></span></p>
                         <p><b>Principal:</b> <span id="alertPrincipal"></span></p>
+                        <p><b>Scan ID:</b> <span id="alertCheckId"></span></p>
                         <p><b>Status:</b> <span id="alertStatus"></span></p>
                         <p><b>Created:</b> <span id="alertCreated"></span></p>
                     </div>
 
                     <div class="finding" style="margin-top:18px">
+                        <b>Original caption</b>
+                        <span class="muted" id="alertCaption"></span>
+                    </div>
+
+                    <div class="finding" style="margin-top:12px">
                         <b>Finding</b>
                         <span class="muted" id="alertDetail"></span>
                     </div>
@@ -253,11 +263,20 @@
                         <span class="muted" id="alertRecommendation"></span>
                     </div>
 
-                    <div style="margin-top:18px">
+                    <div style="margin-top:18px;display:flex;gap:10px;flex-wrap:wrap">
+                        <button
+                            id="alertCaseButton"
+                            type="button"
+                            class="btn"
+                            onclick="createCaseFromAlert()"
+                        >
+                            Create Case
+                        </button>
+
                         <button
                             id="alertCloseButton"
                             type="button"
-                            class="btn"
+                            class="btn alt"
                             onclick="closeCurrentAlert()"
                         >
                             Close Alert
@@ -326,7 +345,7 @@
 
                     {% for p in principals %}
                     <tr>
-                        <td>{{p.name}}</td>
+                        <td><a href="/principals/{{ p.id }}" style="color:inherit;text-decoration:none"><b>{{ p.name }}</b></a></td>
                         <td>{{p.role}}</td>
                         <td class="{{'red' if p.risk>=60 else 'amber' if p.risk>=40 else 'green'}}">
                             <b>{{p.risk}}/100</b>
