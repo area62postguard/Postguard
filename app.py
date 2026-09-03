@@ -2209,6 +2209,121 @@ def forced_password_reset():
     return render_template_string(FORCED_PASSWORD_RESET_PAGE)
 
 
+
+# ============================================================
+# CUSTOMER ACCOUNT CENTRE
+# ============================================================
+
+ACCOUNT_PAGE = """
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PostGuard · My Account</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;font-family:system-ui,sans-serif;background:#0b1020;color:#f5f7fb}
+main{width:min(760px,calc(100% - 32px));margin:40px auto}.card{background:#151c2f;border:1px solid #26314a;border-radius:16px;padding:24px;margin:16px 0}
+.muted{color:#aeb9ce}.btn{display:inline-block;padding:10px 13px;border:1px solid #394762;border-radius:9px;background:#151c2f;color:#fff;text-decoration:none;cursor:pointer}
+.danger{border-color:#a54251;background:#381720}label{display:block;margin:15px 0 6px}input{width:100%;padding:12px;border-radius:9px;border:1px solid #394762;background:#0b1020;color:#fff}
+.flash{padding:10px 12px;border:1px solid #4c5f82;border-radius:9px;margin:12px 0}.actions{display:flex;gap:10px;flex-wrap:wrap}
+</style></head><body><main>
+<div class="actions"><a class="btn" href="{{ url_for('home') }}">← Dashboard</a></div>
+<h1>My Account</h1>
+{% with messages=get_flashed_messages() %}{% if messages %}{% for m in messages %}<div class="flash">{{ m }}</div>{% endfor %}{% endif %}{% endwith %}
+<div class="card"><h2>Account details</h2><p><strong>Email:</strong> {{ user["email"] }}</p><p><strong>Account type:</strong> {{ user["role"] or "user" }}</p><p><strong>Registered:</strong> {{ user["created_at"] or "—" }}</p></div>
+<div class="card"><h2>Change password</h2>
+<form method="post" action="{{ url_for('account_change_password') }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<label>Current password</label><input name="current_password" type="password" autocomplete="current-password" required>
+<label>New password</label><input name="new_password" type="password" minlength="12" autocomplete="new-password" required>
+<label>Confirm new password</label><input name="confirm_password" type="password" minlength="12" autocomplete="new-password" required>
+<button class="btn" type="submit" style="margin-top:18px">Change password</button></form></div>
+{% if user["role"] != "admin" %}
+<div class="card"><h2>Delete my account</h2><p class="muted">Permanently removes your PostGuard account and PostGuard-owned scans, alerts, cases and profile records.</p>
+<a class="btn danger" href="{{ url_for('account_delete') }}">Delete my account</a></div>
+{% endif %}
+</main></body></html>
+"""
+
+ACCOUNT_DELETE_PAGE = """
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PostGuard · Delete Account</title><style>
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;font-family:system-ui,sans-serif;background:#0b1020;color:#f5f7fb}
+.panel{width:min(600px,100%);background:#151c2f;border:1px solid #7b3540;border-radius:16px;padding:28px}.warning{line-height:1.5}.muted{color:#aeb9ce}
+label{display:block;margin:16px 0 6px}input{width:100%;padding:12px;border-radius:9px;border:1px solid #394762;background:#0b1020;color:#fff}
+.btn{display:inline-block;margin-top:18px;padding:11px 14px;border-radius:9px;border:1px solid #394762;background:#151c2f;color:#fff;text-decoration:none;cursor:pointer}.danger{border-color:#a54251;background:#381720}
+</style></head><body><div class="panel"><h1>Delete my account</h1>
+<p class="warning"><strong>This is permanent.</strong> Your PostGuard account and PostGuard-owned customer data will be deleted.</p>
+<p class="muted">To confirm, type your email address and current password.</p>
+<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<label>Email</label><input name="confirm_email" type="email" autocomplete="off" required>
+<label>Current password</label><input name="password" type="password" autocomplete="current-password" required>
+<button class="btn danger" type="submit" onclick="return confirm('Permanently delete your PostGuard account?')">Permanently delete my account</button>
+<a class="btn" href="{{ url_for('account') }}">Cancel</a></form></div></body></html>
+"""
+
+@app.get("/account")
+@auth
+def account():
+    c=db()
+    user=c.execute("SELECT id,email,role,created_at FROM users WHERE id=?",(session["uid"],)).fetchone()
+    c.close()
+    if not user:
+        session.clear()
+        return redirect(url_for("login"))
+    return render_template_string(ACCOUNT_PAGE,user=user)
+
+@app.post("/account/change-password")
+@auth
+@limiter.limit("5 per minute")
+def account_change_password():
+    current=request.form.get("current_password","")
+    new=request.form.get("new_password","")
+    confirm=request.form.get("confirm_password","")
+    c=db()
+    user=c.execute("SELECT id,password FROM users WHERE id=?",(session["uid"],)).fetchone()
+    if not user or not check_password_hash(user["password"],current):
+        c.close(); flash("Current password is incorrect."); return redirect(url_for("account"))
+    if len(new)<12:
+        c.close(); flash("New password must be at least 12 characters."); return redirect(url_for("account"))
+    if new!=confirm:
+        c.close(); flash("New passwords do not match."); return redirect(url_for("account"))
+    if check_password_hash(user["password"],new):
+        c.close(); flash("Choose a password different from your current password."); return redirect(url_for("account"))
+    c.execute("UPDATE users SET password=?,reset_required=0 WHERE id=?",(generate_password_hash(new),user["id"]))
+    c.commit(); c.close()
+    audit("customer_password_change",f"user_id={user['id']}")
+    session.clear()
+    flash("Password changed. Sign in again with your new password.")
+    return redirect(url_for("login"))
+
+@app.route("/account/delete",methods=["GET","POST"])
+@auth
+@limiter.limit("5 per minute",methods=["POST"])
+def account_delete():
+    uid=session["uid"]
+    c=db()
+    user=c.execute("SELECT id,email,password,role FROM users WHERE id=?",(uid,)).fetchone()
+    if not user:
+        c.close(); session.clear(); return redirect(url_for("login"))
+    if (user["role"] or "user")=="admin":
+        c.close(); abort(403)
+    if request.method=="POST":
+        email=request.form.get("confirm_email","").strip().lower()
+        password=request.form.get("password","")
+        if email!=user["email"].strip().lower() or not check_password_hash(user["password"],password):
+            c.close(); flash("Email or password confirmation was incorrect."); return render_template_string(ACCOUNT_DELETE_PAGE),403
+        c.execute("DELETE FROM alerts WHERE user_id=?",(uid,))
+        c.execute("DELETE FROM cases WHERE user_id=?",(uid,))
+        c.execute("DELETE FROM checks WHERE user_id=?",(uid,))
+        c.execute("DELETE FROM principals WHERE user_id=?",(uid,))
+        c.execute("DELETE FROM audit WHERE user_id=?",(uid,))
+        c.execute("DELETE FROM users WHERE id=?",(uid,))
+        c.commit(); c.close()
+        session.clear()
+        flash("Your PostGuard account has been permanently deleted.")
+        return redirect(url_for("login"))
+    c.close()
+    return render_template_string(ACCOUNT_DELETE_PAGE)
+
 # ============================================================
 # ADMIN USER MANAGEMENT
 # ============================================================
@@ -2522,7 +2637,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="4.8",
+        version="4.9",
     )
 
 
