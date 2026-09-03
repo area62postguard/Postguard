@@ -8,7 +8,7 @@ import psycopg
 from psycopg.rows import dict_row
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from functools import wraps
 
 from flask import (
@@ -57,6 +57,8 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_SAMESITE="Lax",
+    PERMANENT_SESSION_LIFETIME=timedelta(minutes=30),
+    SESSION_REFRESH_EACH_REQUEST=True,
 )
 
 @app.after_request
@@ -703,6 +705,7 @@ def login():
             password,
         ):
             session.clear()
+            session.permanent = True
 
             session["uid"] = user["id"]
             session["email"] = email
