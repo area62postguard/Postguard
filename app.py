@@ -1179,9 +1179,9 @@ tr:last-child td{border-bottom:0}
     <div class="brand">POST<span>GUARD</span></div>
     <nav class="nav">
         <a class="active" href="{{ url_for('home') }}">Dashboard</a>
-        <a href="{{ url_for('scanner') if 'scanner' in current_app.view_functions else '#' }}">Check a Post</a>
-        <a href="{{ url_for('alerts') if 'alerts' in current_app.view_functions else '#' }}">Alerts</a>
-        <a href="{{ url_for('cases') if 'cases' in current_app.view_functions else '#' }}">Cases</a>
+        <a href="{{ url_for('home') }}#check-post">Check a Post</a>
+        <a href="{{ url_for('home') }}#active-alerts">Alerts</a>
+        <a href="{{ url_for('home') }}#recent-cases">Cases</a>
         <a href="{{ url_for('account') }}">My Account</a>
     </nav>
 </aside>
@@ -1195,7 +1195,7 @@ tr:last-child td{border-bottom:0}
         </div>
         <div class="actions">
             <a class="btn" href="{{ url_for('account') }}">My Account</a>
-            <a class="btn primary" href="{{ url_for('scanner') if 'scanner' in current_app.view_functions else '#' }}">Check a Post</a>
+            <a class="btn primary" href="{{ url_for('home') }}#check-post">Check a Post</a>
         </div>
     </div>
 
@@ -1219,7 +1219,7 @@ tr:last-child td{border-bottom:0}
         </div>
     </section>
 
-    <section class="section-grid">
+    <section class="section-grid" id="check-post">
         <div class="panel">
             <h2>Recent post checks</h2>
             {% if recent_checks %}
@@ -1244,11 +1244,11 @@ tr:last-child td{border-bottom:0}
         <div class="panel">
             <h2>Quick actions</h2>
             <div class="quick">
-                <a href="{{ url_for('scanner') if 'scanner' in current_app.view_functions else '#' }}">
+                <a href="{{ url_for('home') }}#check-post">
                     <strong>Check a Post</strong>
                     <span class="muted">Scan a caption or image before publishing.</span>
                 </a>
-                <a href="{{ url_for('alerts') if 'alerts' in current_app.view_functions else '#' }}">
+                <a href="{{ url_for('home') }}#active-alerts">
                     <strong>Review Alerts</strong>
                     <span class="muted">See exposure that needs attention.</span>
                 </a>
@@ -1261,7 +1261,7 @@ tr:last-child td{border-bottom:0}
     </section>
 
     <section class="section-grid">
-        <div class="panel">
+        <div class="panel" id="active-alerts">
             <h2>Active alerts</h2>
             {% if active_alerts %}
                 {% for row in active_alerts %}
@@ -2827,7 +2827,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="5.0",
+        version="5.0.1",
     )
 
 
