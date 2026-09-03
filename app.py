@@ -259,7 +259,16 @@ def init():
     ensure_column("principals", "user_id", "INTEGER")
     ensure_column("checks", "user_id", "INTEGER")
     ensure_column("alerts", "user_id", "INTEGER")
+
+    # Case-management columns added for customer incident workflow.
+    # Older PostGuard databases only had title/status/owner/notes/created_at,
+    # so these migrations are required before customer cases can be created.
     ensure_column("cases", "user_id", "INTEGER")
+    ensure_column("cases", "principal_id", "INTEGER")
+    ensure_column("cases", "alert_id", "INTEGER")
+    ensure_column("cases", "category", "TEXT")
+    ensure_column("cases", "severity", "TEXT")
+
     ensure_column("users", "enabled", "INTEGER DEFAULT 1")
     ensure_column("users", "reset_required", "INTEGER DEFAULT 0")
     c.execute("UPDATE users SET enabled=1 WHERE enabled IS NULL")
@@ -4045,7 +4054,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="5.9",
+        version="5.9.1",
     )
 
 
