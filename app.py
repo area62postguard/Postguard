@@ -4,6 +4,15 @@ import json
 import secrets
 import hmac
 import sqlite3
+import base64
+import hashlib
+import logging
+import smtplib
+import ssl
+import struct
+import time
+from email.message import EmailMessage
+from urllib.parse import quote
 
 import psycopg
 from psycopg.rows import dict_row
@@ -49,11 +58,16 @@ limiter = Limiter(
     default_limits=[]
 )
 
-app.secret_key = os.getenv(
+POSTGUARD_ENV = os.getenv("POSTGUARD_ENV", "development").strip().lower()
+IS_PRODUCTION = POSTGUARD_ENV == "production" or os.getenv("RENDER", "").strip().lower() == "true"
 
-    "POSTGUARD_SECRET",
-    secrets.token_hex(32),
-)
+configured_secret = os.getenv("POSTGUARD_SECRET", "").strip()
+if IS_PRODUCTION and len(configured_secret) < 32:
+    raise RuntimeError(
+        "POSTGUARD_SECRET must be configured with at least 32 characters in production."
+    )
+
+app.secret_key = configured_secret or secrets.token_hex(32)
 
 app.config.update(
     MAX_CONTENT_LENGTH=20 * 1024 * 1024,
@@ -62,7 +76,15 @@ app.config.update(
     SESSION_COOKIE_SAMESITE="Lax",
     PERMANENT_SESSION_LIFETIME=timedelta(minutes=30),
     SESSION_REFRESH_EACH_REQUEST=True,
+    PREFERRED_URL_SCHEME="https" if IS_PRODUCTION else "http",
 )
+
+# Production logging intentionally avoids passwords, tokens, captions and image content.
+logging.basicConfig(
+    level=os.getenv("POSTGUARD_LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+
 
 @app.after_request
 def add_security_headers(response):
@@ -70,8 +92,29 @@ def add_security_headers(response):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = (
-        "camera=(), microphone=(), geolocation=()"
+        "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
     )
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "font-src 'self'; "
+        "connect-src 'self'; "
+        "media-src 'self'; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'; "
+        "frame-ancestors 'none'; "
+        "upgrade-insecure-requests"
+    )
+    if IS_PRODUCTION:
+        response.headers["Strict-Transport-Security"] = (
+            "max-age=31536000; includeSubDomains"
+        )
+    if request.endpoint not in ("health", "ready"):
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
     return response
 
 # ============================================================
@@ -220,6 +263,26 @@ def init():
             detail TEXT,
             created_at TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS auth_tokens(
+            id INTEGER PRIMARY KEY,
+            user_id INTEGER,
+            kind TEXT,
+            token_hash TEXT UNIQUE,
+            expires_at TEXT,
+            used_at TEXT,
+            created_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS security_events(
+            id INTEGER PRIMARY KEY,
+            user_id INTEGER,
+            event_type TEXT,
+            success INTEGER,
+            ip_hash TEXT,
+            user_agent TEXT,
+            created_at TEXT
+        );
         """
     )
 
@@ -271,8 +334,17 @@ def init():
 
     ensure_column("users", "enabled", "INTEGER DEFAULT 1")
     ensure_column("users", "reset_required", "INTEGER DEFAULT 0")
+    ensure_column("users", "email_verified", "INTEGER DEFAULT 0")
+    ensure_column("users", "mfa_secret", "TEXT")
+    ensure_column("users", "mfa_enabled", "INTEGER DEFAULT 0")
+    ensure_column("users", "last_login_at", "TEXT")
     c.execute("UPDATE users SET enabled=1 WHERE enabled IS NULL")
     c.execute("UPDATE users SET reset_required=0 WHERE reset_required IS NULL")
+    c.execute("UPDATE users SET email_verified=0 WHERE email_verified IS NULL")
+    c.execute("UPDATE users SET mfa_enabled=0 WHERE mfa_enabled IS NULL")
+
+    # Existing administrator accounts are trusted as verified during migration.
+    c.execute("UPDATE users SET email_verified=1 WHERE role='admin'")
 
     admin_row = c.execute(
         """
@@ -371,6 +443,201 @@ def init():
     c.close()
 
 
+
+# ============================================================
+# PRODUCTION SECURITY HELPERS
+# ============================================================
+
+def _iso_to_dt(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except Exception:
+        return None
+
+
+def _hash_token(token):
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _request_ip_hash():
+    raw = request.headers.get("X-Forwarded-For", request.remote_addr or "")
+    raw = raw.split(",", 1)[0].strip()
+    key = app.secret_key.encode("utf-8")
+    return hmac.new(key, raw.encode("utf-8"), hashlib.sha256).hexdigest()[:24]
+
+
+def security_event(event_type, success, user_id=None):
+    try:
+        c = db()
+        c.execute(
+            """
+            INSERT INTO security_events(
+                user_id,event_type,success,ip_hash,user_agent,created_at
+            ) VALUES(?,?,?,?,?,?)
+            """,
+            (
+                user_id,
+                event_type[:80],
+                1 if success else 0,
+                _request_ip_hash(),
+                (request.headers.get("User-Agent") or "")[:240],
+                now(),
+            ),
+        )
+        c.commit()
+        c.close()
+    except Exception:
+        app.logger.exception("Unable to record security event")
+
+
+def _smtp_configured():
+    return bool(
+        os.getenv("POSTGUARD_SMTP_HOST")
+        and os.getenv("POSTGUARD_EMAIL_FROM")
+    )
+
+
+def send_email(to_address, subject, text_body):
+    """Send transactional email through operator-configured SMTP."""
+    if not _smtp_configured():
+        app.logger.warning("Transactional email not configured; subject=%s", subject)
+        return False
+
+    host = os.getenv("POSTGUARD_SMTP_HOST", "").strip()
+    port = int(os.getenv("POSTGUARD_SMTP_PORT", "587"))
+    username = os.getenv("POSTGUARD_SMTP_USERNAME", "").strip()
+    password = os.getenv("POSTGUARD_SMTP_PASSWORD", "")
+    sender = os.getenv("POSTGUARD_EMAIL_FROM", "").strip()
+    use_ssl = os.getenv("POSTGUARD_SMTP_SSL", "0") == "1"
+
+    msg = EmailMessage()
+    msg["From"] = sender
+    msg["To"] = to_address
+    msg["Subject"] = subject
+    msg.set_content(text_body)
+
+    context = ssl.create_default_context()
+    if use_ssl:
+        with smtplib.SMTP_SSL(host, port, context=context, timeout=15) as server:
+            if username:
+                server.login(username, password)
+            server.send_message(msg)
+    else:
+        with smtplib.SMTP(host, port, timeout=15) as server:
+            server.ehlo()
+            server.starttls(context=context)
+            server.ehlo()
+            if username:
+                server.login(username, password)
+            server.send_message(msg)
+    return True
+
+
+def create_auth_token(user_id, kind, minutes=30):
+    raw = secrets.token_urlsafe(32)
+    expires = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+    c = db()
+    c.execute(
+        """
+        INSERT INTO auth_tokens(user_id,kind,token_hash,expires_at,used_at,created_at)
+        VALUES(?,?,?,?,?,?)
+        """,
+        (user_id, kind, _hash_token(raw), expires.isoformat(), None, now()),
+    )
+    c.commit()
+    c.close()
+    return raw
+
+
+def consume_auth_token(raw, kind):
+    if not raw:
+        return None
+    c = db()
+    row = c.execute(
+        """
+        SELECT * FROM auth_tokens
+        WHERE token_hash=? AND kind=? AND used_at IS NULL
+        ORDER BY id DESC LIMIT 1
+        """,
+        (_hash_token(raw), kind),
+    ).fetchone()
+    if not row:
+        c.close()
+        return None
+    expires = _iso_to_dt(row["expires_at"])
+    if not expires or expires < datetime.now(timezone.utc):
+        c.close()
+        return None
+    c.execute("UPDATE auth_tokens SET used_at=? WHERE id=?", (now(), row["id"]))
+    c.commit()
+    c.close()
+    return row
+
+
+def public_base_url():
+    configured = os.getenv("POSTGUARD_PUBLIC_URL", "").strip().rstrip("/")
+    if configured:
+        return configured
+    return request.url_root.rstrip("/")
+
+
+def send_verification_email(user_id, email):
+    raw = create_auth_token(user_id, "verify_email", minutes=60)
+    link = f"{public_base_url()}/verify-email/{quote(raw)}"
+    return send_email(
+        email,
+        "Verify your PostGuard email",
+        "Verify your PostGuard email address by opening this link:\n\n"
+        f"{link}\n\nThis link expires in 60 minutes. "
+        "If you did not create a PostGuard account, ignore this email.",
+    )
+
+
+def send_password_reset_email(user_id, email):
+    raw = create_auth_token(user_id, "password_reset", minutes=30)
+    link = f"{public_base_url()}/forgot-password/{quote(raw)}"
+    return send_email(
+        email,
+        "Reset your PostGuard password",
+        "A password reset was requested for your PostGuard account.\n\n"
+        f"Open this link to choose a new password:\n{link}\n\n"
+        "This link expires in 30 minutes and can be used once. "
+        "If you did not request this, ignore this email.",
+    )
+
+
+def _totp_secret():
+    return base64.b32encode(secrets.token_bytes(20)).decode("ascii").rstrip("=")
+
+
+def _totp_code(secret, for_time=None):
+    for_time = int(for_time or time.time())
+    counter = for_time // 30
+    padded = secret + "=" * ((8 - len(secret) % 8) % 8)
+    key = base64.b32decode(padded, casefold=True)
+    digest = hmac.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    number = struct.unpack(">I", digest[offset:offset + 4])[0] & 0x7FFFFFFF
+    return f"{number % 1000000:06d}"
+
+
+def verify_totp(secret, code):
+    code = re.sub(r"\D", "", code or "")
+    if len(code) != 6:
+        return False
+    current = int(time.time())
+    return any(
+        hmac.compare_digest(_totp_code(secret, current + offset), code)
+        for offset in (-30, 0, 30)
+    )
+
+
+def admin_mfa_required():
+    return os.getenv("POSTGUARD_REQUIRE_ADMIN_MFA", "1" if IS_PRODUCTION else "0") == "1"
+
+
 # ============================================================
 # AUTHENTICATION / AUTHORISATION
 # ============================================================
@@ -383,7 +650,7 @@ def auth(f):
 
         c = db()
         account = c.execute(
-            "SELECT role, enabled, reset_required FROM users WHERE id=?",
+            "SELECT role, enabled, reset_required, email_verified FROM users WHERE id=?",
             (session["uid"],),
         ).fetchone()
         c.close()
@@ -398,6 +665,21 @@ def auth(f):
             return redirect(url_for("login"))
 
         session["role"] = account["role"] or "user"
+
+        if (
+            account["role"] == "admin"
+            and admin_mfa_required()
+            and session.get("mfa_pending")
+            and request.endpoint not in ("mfa_setup", "mfa_challenge", "logout")
+        ):
+            return redirect(url_for("mfa_challenge"))
+
+        if (
+            account["role"] != "admin"
+            and account["email_verified"] == 0
+            and request.endpoint not in ("verify_email_notice", "resend_verification", "logout")
+        ):
+            return redirect(url_for("verify_email_notice"))
 
         if (
             account["reset_required"] == 1
@@ -973,6 +1255,7 @@ input::placeholder{color:#61748f}
                     New to PostGuard?
                     <a class="mini-link" href="{{ url_for('register') }}">Create an account</a>.
                     Administrators use this same secure sign-in.
+                    <br><a class="mini-link" href="{{ url_for('forgot_password') }}">Forgot your password?</a>
                 </div>
             </form>
             {% endif %}
@@ -1097,8 +1380,8 @@ def register():
 
         user = c.execute(
             """
-            INSERT INTO users(email, password, role, created_at)
-            VALUES(?,?,?,?)
+            INSERT INTO users(email, password, role, created_at, email_verified)
+            VALUES(?,?,?,?,?)
             RETURNING id
             """,
             (
@@ -1106,6 +1389,7 @@ def register():
                 generate_password_hash(password),
                 "user",
                 now(),
+                0,
             ),
         ).fetchone()
 
@@ -1143,10 +1427,22 @@ def register():
             user_id,
         )
 
-        flash(
-            "Your PostGuard account has been created. "
-            "You can now sign in."
-        )
+        try:
+            sent = send_verification_email(user_id, email)
+        except Exception:
+            app.logger.exception("Verification email delivery failed for user_id=%s", user_id)
+            sent = False
+
+        if sent:
+            flash(
+                "Your account has been created. Check your email and verify "
+                "your address before signing in."
+            )
+        else:
+            flash(
+                "Your account was created, but email delivery is not configured. "
+                "Please contact the PostGuard administrator."
+            )
         return redirect(url_for("login"))
 
     return render_template_string(AUTH_ENTRY_PAGE, mode="register")
@@ -1407,6 +1703,7 @@ def login():
             user["password"],
             password,
         ):
+            security_event("login_password", True, user["id"])
             if user["enabled"] == 0:
                 c.close()
                 flash("This PostGuard account has been disabled by an administrator.")
@@ -1448,9 +1745,30 @@ def login():
             if user["reset_required"] == 1 and role != "admin":
                 return redirect(url_for("forced_password_reset"))
 
+            if role != "admin" and user["email_verified"] == 0:
+                return redirect(url_for("verify_email_notice"))
+
+            if role == "admin" and admin_mfa_required():
+                session["mfa_pending"] = True
+                c2 = db()
+                mfa_row = c2.execute(
+                    "SELECT mfa_enabled FROM users WHERE id=?",
+                    (user["id"],),
+                ).fetchone()
+                c2.close()
+                if not mfa_row or mfa_row["mfa_enabled"] != 1:
+                    return redirect(url_for("mfa_setup"))
+                return redirect(url_for("mfa_challenge"))
+
+            c2 = db()
+            c2.execute("UPDATE users SET last_login_at=? WHERE id=?", (now(), user["id"]))
+            c2.commit()
+            c2.close()
             return redirect(url_for("home"))
 
+        failed_user_id = user["id"] if user else None
         c.close()
+        security_event("login_password", False, failed_user_id)
 
         flash("Invalid credentials.")
 
@@ -1462,6 +1780,286 @@ def login():
 def logout():
     session.clear()
     return redirect(url_for("login"))
+
+
+
+# ============================================================
+# EMAIL VERIFICATION / PASSWORD RECOVERY / ADMIN MFA
+# ============================================================
+
+SIMPLE_AUTH_PAGE = """
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PostGuard · {{ title }}</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;
+font-family:system-ui,sans-serif;background:#07101d;color:#f6f8fb}
+.card{width:min(520px,100%);background:#0d1828;border:1px solid #243754;border-radius:18px;padding:28px}
+.logo{display:block;width:96px;height:96px;border-radius:50%;object-fit:cover;margin:0 auto 18px}
+h1{margin:0 0 10px}.muted{color:#9aabc2;line-height:1.55}
+label{display:block;margin:16px 0 7px}input{width:100%;padding:12px;border-radius:10px;border:1px solid #314662;background:#091524;color:#fff}
+.btn{display:inline-block;margin-top:18px;padding:11px 14px;border-radius:10px;border:1px solid #42608d;background:#173054;color:#fff;text-decoration:none;cursor:pointer}
+.flash{padding:10px 12px;border:1px solid #5b3c48;background:#281923;border-radius:9px;margin:12px 0}
+</style></head><body><main class="card">
+<img class="logo" src="{{ url_for('static',filename='postguard_logo.jpg') }}" alt="PostGuard">
+<h1>{{ title }}</h1><p class="muted">{{ message }}</p>
+{% with messages=get_flashed_messages() %}{% for m in messages %}<div class="flash">{{ m }}</div>{% endfor %}{% endwith %}
+{% if form_kind == 'forgot' %}
+<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<label>Email address</label><input name="email" type="email" required autocomplete="email">
+<button class="btn">Send password reset link</button></form>
+{% elif form_kind == 'reset' %}
+<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<label>New password</label><input name="password" type="password" minlength="12" required autocomplete="new-password">
+<label>Confirm new password</label><input name="confirm" type="password" minlength="12" required autocomplete="new-password">
+<button class="btn">Set new password</button></form>
+{% elif form_kind == 'mfa_setup' %}
+<p class="muted">Add this secret to your authenticator app:</p>
+<p><strong style="word-break:break-all">{{ secret }}</strong></p>
+<p class="muted">Account: {{ session.get('email') }}</p>
+<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<label>6-digit authenticator code</label><input name="code" inputmode="numeric" pattern="[0-9]{6}" required>
+<button class="btn">Enable MFA</button></form>
+{% elif form_kind == 'mfa' %}
+<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<label>6-digit authenticator code</label><input name="code" inputmode="numeric" pattern="[0-9]{6}" required autofocus>
+<button class="btn">Verify and continue</button></form>
+{% elif action_url %}
+<form method="post" action="{{ action_url }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<button class="btn">{{ action_label }}</button></form>
+{% endif %}
+{% if back_url %}<p><a class="btn" href="{{ back_url }}">Back</a></p>{% endif %}
+</main></body></html>
+"""
+
+
+@app.get("/verify-email/<token>")
+@limiter.limit("10 per minute")
+def verify_email(token):
+    row = consume_auth_token(token, "verify_email")
+    if not row:
+        return render_template_string(
+            SIMPLE_AUTH_PAGE,
+            title="Verification link invalid",
+            message="This verification link is invalid, expired or has already been used.",
+            form_kind=None, action_url=None, action_label=None,
+            back_url=url_for("login"),
+        ), 400
+    c = db()
+    c.execute("UPDATE users SET email_verified=1 WHERE id=?", (row["user_id"],))
+    c.commit()
+    c.close()
+    security_event("email_verified", True, row["user_id"])
+    flash("Email verified. You can now sign in.")
+    return redirect(url_for("login"))
+
+
+@app.get("/verify-email")
+@auth
+def verify_email_notice():
+    return render_template_string(
+        SIMPLE_AUTH_PAGE,
+        title="Verify your email",
+        message="Your PostGuard account is waiting for email verification. "
+                "Use the verification link sent to your registered email address.",
+        form_kind=None,
+        action_url=url_for("resend_verification"),
+        action_label="Resend verification email",
+        back_url=None,
+    )
+
+
+@app.post("/verify-email/resend")
+@auth
+@limiter.limit("3 per 15 minutes")
+def resend_verification():
+    c = db()
+    user = c.execute(
+        "SELECT id,email,email_verified FROM users WHERE id=?",
+        (session["uid"],),
+    ).fetchone()
+    c.close()
+    if not user:
+        abort(404)
+    if user["email_verified"] == 1:
+        return redirect(url_for("home"))
+    try:
+        sent = send_verification_email(user["id"], user["email"])
+    except Exception:
+        app.logger.exception("Verification email resend failed")
+        sent = False
+    flash("Verification email sent." if sent else "Email service is not configured.")
+    return redirect(url_for("verify_email_notice"))
+
+
+@app.route("/forgot-password", methods=["GET", "POST"])
+@limiter.limit("5 per 15 minutes", methods=["POST"])
+def forgot_password():
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        c = db()
+        user = c.execute(
+            "SELECT id,email FROM users WHERE email=? AND enabled=1",
+            (email,),
+        ).fetchone()
+        c.close()
+        if user:
+            try:
+                send_password_reset_email(user["id"], user["email"])
+            except Exception:
+                app.logger.exception("Password reset email failed")
+            security_event("password_reset_requested", True, user["id"])
+        else:
+            security_event("password_reset_requested", False, None)
+        flash("If that account exists, a password reset email has been sent.")
+    return render_template_string(
+        SIMPLE_AUTH_PAGE,
+        title="Reset your password",
+        message="Enter the email address registered with PostGuard.",
+        form_kind="forgot", action_url=None, action_label=None,
+        back_url=url_for("login"),
+    )
+
+
+@app.route("/forgot-password/<token>", methods=["GET", "POST"])
+@limiter.limit("5 per 15 minutes", methods=["POST"])
+def forgot_password_token(token):
+    token_hash = _hash_token(token)
+    c = db()
+    row = c.execute(
+        """
+        SELECT * FROM auth_tokens
+        WHERE token_hash=? AND kind='password_reset' AND used_at IS NULL
+        ORDER BY id DESC LIMIT 1
+        """,
+        (token_hash,),
+    ).fetchone()
+    c.close()
+    valid = bool(row and _iso_to_dt(row["expires_at"])
+                 and _iso_to_dt(row["expires_at"]) >= datetime.now(timezone.utc))
+    if not valid:
+        return render_template_string(
+            SIMPLE_AUTH_PAGE,
+            title="Reset link invalid",
+            message="This password reset link is invalid, expired or already used.",
+            form_kind=None, action_url=None, action_label=None,
+            back_url=url_for("forgot_password"),
+        ), 400
+
+    if request.method == "POST":
+        password = request.form.get("password", "")
+        confirm = request.form.get("confirm", "")
+        if len(password) < 12:
+            flash("Password must be at least 12 characters.")
+        elif password != confirm:
+            flash("Passwords do not match.")
+        else:
+            consumed = consume_auth_token(token, "password_reset")
+            if not consumed:
+                flash("That reset link is no longer valid.")
+            else:
+                c = db()
+                c.execute(
+                    "UPDATE users SET password=?, reset_required=0 WHERE id=?",
+                    (generate_password_hash(password), consumed["user_id"]),
+                )
+                c.commit()
+                c.close()
+                security_event("password_reset_completed", True, consumed["user_id"])
+                session.clear()
+                flash("Password changed. Sign in with your new password.")
+                return redirect(url_for("login"))
+
+    return render_template_string(
+        SIMPLE_AUTH_PAGE,
+        title="Choose a new password",
+        message="Use a new password of at least 12 characters.",
+        form_kind="reset", action_url=None, action_label=None, back_url=None,
+    )
+
+
+@app.route("/mfa/setup", methods=["GET", "POST"])
+@auth
+@limiter.limit("8 per 10 minutes", methods=["POST"])
+def mfa_setup():
+    if session.get("role") != "admin":
+        abort(403)
+    c = db()
+    row = c.execute(
+        "SELECT mfa_secret,mfa_enabled FROM users WHERE id=?",
+        (session["uid"],),
+    ).fetchone()
+    if not row:
+        c.close()
+        abort(404)
+    if row["mfa_enabled"] == 1:
+        c.close()
+        return redirect(url_for("mfa_challenge"))
+
+    secret = row["mfa_secret"] or _totp_secret()
+    if not row["mfa_secret"]:
+        c.execute("UPDATE users SET mfa_secret=? WHERE id=?", (secret, session["uid"]))
+        c.commit()
+    c.close()
+
+    if request.method == "POST":
+        if verify_totp(secret, request.form.get("code", "")):
+            c = db()
+            c.execute("UPDATE users SET mfa_enabled=1 WHERE id=?", (session["uid"],))
+            c.commit()
+            c.close()
+            security_event("mfa_enabled", True, session["uid"])
+            session["mfa_pending"] = False
+            session["mfa_verified_at"] = now()
+            flash("Multi-factor authentication enabled.")
+            return redirect(url_for("home"))
+        security_event("mfa_setup", False, session["uid"])
+        flash("Invalid authenticator code.")
+
+    return render_template_string(
+        SIMPLE_AUTH_PAGE,
+        title="Secure Admin with MFA",
+        message="PostGuard requires an authenticator-app code for production Admin access.",
+        form_kind="mfa_setup", secret=secret, action_url=None, action_label=None,
+        back_url=None,
+    )
+
+
+@app.route("/mfa/challenge", methods=["GET", "POST"])
+@auth
+@limiter.limit("8 per 10 minutes", methods=["POST"])
+def mfa_challenge():
+    if session.get("role") != "admin":
+        abort(403)
+    c = db()
+    row = c.execute(
+        "SELECT mfa_secret,mfa_enabled FROM users WHERE id=?",
+        (session["uid"],),
+    ).fetchone()
+    c.close()
+    if not row or row["mfa_enabled"] != 1 or not row["mfa_secret"]:
+        return redirect(url_for("mfa_setup"))
+
+    if request.method == "POST":
+        if verify_totp(row["mfa_secret"], request.form.get("code", "")):
+            session["mfa_pending"] = False
+            session["mfa_verified_at"] = now()
+            c = db()
+            c.execute("UPDATE users SET last_login_at=? WHERE id=?", (now(), session["uid"]))
+            c.commit()
+            c.close()
+            security_event("mfa_challenge", True, session["uid"])
+            return redirect(url_for("home"))
+        security_event("mfa_challenge", False, session["uid"])
+        flash("Invalid authenticator code.")
+
+    return render_template_string(
+        SIMPLE_AUTH_PAGE,
+        title="Admin verification",
+        message="Enter the current 6-digit code from your authenticator app.",
+        form_kind="mfa", action_url=None, action_label=None, back_url=None,
+    )
 
 
 # ============================================================
@@ -4605,6 +5203,66 @@ def admin_user_detail(user_id):
     return render_template_string(ADMIN_USER_DETAIL_PAGE,user=user,checks=checks,alerts=alerts,cases=cases)
 
 
+
+# ============================================================
+# PUBLIC PRIVACY / TERMS / RETENTION INFORMATION
+# Draft operational pages. Obtain UK legal review before commercial launch.
+# ============================================================
+
+LEGAL_PAGE = """
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PostGuard · {{ title }}</title><style>
+:root{color-scheme:dark}body{margin:0;font-family:system-ui,sans-serif;background:#07101d;color:#f6f8fb}
+main{width:min(900px,calc(100% - 32px));margin:40px auto;background:#0d1828;border:1px solid #243754;border-radius:16px;padding:28px}
+img{width:88px;height:88px;border-radius:50%;object-fit:cover}h1,h2{color:#fff}.muted,p,li{color:#b6c3d4;line-height:1.65}
+a{color:#a9c5ff}.notice{border:1px solid #705d34;background:#261f11;padding:12px;border-radius:9px}
+</style></head><body><main>
+<img src="{{ url_for('static',filename='postguard_logo.jpg') }}" alt="PostGuard">
+<h1>{{ title }}</h1>
+<div class="notice">Production draft: this page must be reviewed and approved by qualified UK legal/privacy counsel before commercial launch.</div>
+{{ body|safe }}
+<p><a href="{{ url_for('login') }}">Return to PostGuard</a></p>
+</main></body></html>
+"""
+
+@app.get("/privacy")
+def privacy_page():
+    body = """
+    <h2>What PostGuard processes</h2>
+    <p>PostGuard processes account information and content a user chooses to submit for security-risk analysis, together with operational security records needed to protect the service.</p>
+    <h2>Why it is processed</h2>
+    <p>The service uses this information to provide pre-publication privacy/security checks, customer alerts and case-management functions, account security and fraud/abuse prevention.</p>
+    <h2>Data minimisation</h2>
+    <p>Passwords are stored as secure password hashes. Uploaded scan images are processed temporarily by the current application and are not intended to be retained as permanent media records.</p>
+    <h2>Your choices</h2>
+    <p>Customers can change their password and delete their PostGuard account from the Account Centre. Additional statutory rights and controller/contact details must be completed in the legally reviewed production notice.</p>
+    """
+    return render_template_string(LEGAL_PAGE,title="Privacy Notice",body=body)
+
+@app.get("/terms")
+def terms_page():
+    body = """
+    <h2>Service purpose</h2>
+    <p>PostGuard is a security-assistance service. Risk scores and recommendations are decision-support and do not guarantee that a post is safe or free from privacy, security, reputational or legal risk.</p>
+    <h2>Authorised use</h2>
+    <p>Users must only submit content and monitor accounts, people or information they are authorised to assess.</p>
+    <h2>Account security</h2>
+    <p>Users are responsible for protecting their credentials and reporting suspected unauthorised access promptly.</p>
+    <h2>Commercial terms</h2>
+    <p>Pricing, liability, governing law, support commitments and service-level terms must be completed and approved before accepting paying customers.</p>
+    """
+    return render_template_string(LEGAL_PAGE,title="Terms of Service",body=body)
+
+@app.get("/data-retention")
+def retention_page():
+    body = """
+    <h2>Current approach</h2>
+    <p>PostGuard retains account, scan, alert, case and audit records needed to provide the service until they are deleted under the product's account-deletion workflow or a future documented retention schedule.</p>
+    <h2>Production requirement</h2>
+    <p>A legally reviewed retention schedule must define retention periods for customer records, security logs, backups and support records before commercial launch.</p>
+    """
+    return render_template_string(LEGAL_PAGE,title="Data Retention",body=body)
+
 # ============================================================
 # HEALTH CHECK
 # ============================================================
@@ -4614,13 +5272,45 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="6.4",
+        version="7.0",
     )
+
+
+@app.get("/ready")
+def ready():
+    checks = {
+        "production_secret": (not IS_PRODUCTION) or len(os.getenv("POSTGUARD_SECRET", "")) >= 32,
+        "postgresql": bool(os.getenv("DATABASE_URL")) if IS_PRODUCTION else True,
+        "public_https_url": bool(os.getenv("POSTGUARD_PUBLIC_URL")) if IS_PRODUCTION else True,
+        "transactional_email": _smtp_configured() if IS_PRODUCTION else True,
+        "admin_mfa_required": admin_mfa_required() if IS_PRODUCTION else True,
+        "database_backups_confirmed": os.getenv("POSTGUARD_BACKUPS_CONFIRMED", "0") == "1" if IS_PRODUCTION else True,
+        "restore_test_confirmed": os.getenv("POSTGUARD_RESTORE_TEST_CONFIRMED", "0") == "1" if IS_PRODUCTION else True,
+        "legal_review_confirmed": os.getenv("POSTGUARD_LEGAL_REVIEW_CONFIRMED", "0") == "1" if IS_PRODUCTION else True,
+        "security_test_confirmed": os.getenv("POSTGUARD_SECURITY_TEST_CONFIRMED", "0") == "1" if IS_PRODUCTION else True,
+        "monitoring_confirmed": os.getenv("POSTGUARD_MONITORING_CONFIRMED", "0") == "1" if IS_PRODUCTION else True,
+        "vision_ai_confirmed": os.getenv("POSTGUARD_VISION_AI_CONFIRMED", "0") == "1" if IS_PRODUCTION else True,
+        "social_oauth_confirmed": os.getenv("POSTGUARD_SOCIAL_OAUTH_CONFIRMED", "0") == "1" if IS_PRODUCTION else True,
+    }
+    ok = all(checks.values())
+    return jsonify(
+        status="ready" if ok else "not_ready",
+        service="postguard",
+        version="7.0",
+        checks=checks,
+    ), 200 if ok else 503
 
 
 # ============================================================
 # STARTUP
 # ============================================================
+
+if IS_PRODUCTION:
+    if not os.getenv("DATABASE_URL"):
+        raise RuntimeError("DATABASE_URL is required in production.")
+    public_url = os.getenv("POSTGUARD_PUBLIC_URL", "").strip()
+    if not public_url.startswith("https://"):
+        raise RuntimeError("POSTGUARD_PUBLIC_URL must be an https:// URL in production.")
 
 init()
 
