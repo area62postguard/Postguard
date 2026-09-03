@@ -179,20 +179,91 @@
                             </span>
                         </td>
                         <td>{{a.category}}</td>
-                        <td>{{a.principal}}</td>
+                        <td>{{a.principal or 'Unassigned'}}</td>
                         <td>{{a.detail}}</td>
                         <td>
-                            {% if a.status=="Open" %}
-                            <button class="btn alt" onclick="closeAlert({{a.id}})">
-                                Close
+                            <button
+                                class="btn alt"
+                                type="button"
+                                data-id="{{ a.id }}"
+                                data-severity="{{ a.severity or '' }}"
+                                data-category="{{ a.category or '' }}"
+                                data-principal="{{ a.principal or 'Unassigned' }}"
+                                data-detail="{{ a.detail or '' }}"
+                                data-recommendation="{{ a.recommendation or '' }}"
+                                data-status="{{ a.status or '' }}"
+                                data-created="{{ a.created_at or '' }}"
+                                onclick="openAlert(this)"
+                            >
+                                Open
                             </button>
-                            {% else %}
-                            Closed
-                            {% endif %}
                         </td>
                     </tr>
                     {% endfor %}
                 </table>
+            </div>
+
+            <div
+                id="alertModal"
+                style="
+                    display:none;
+                    position:fixed;
+                    inset:0;
+                    background:rgba(0,0,0,.6);
+                    z-index:1000;
+                    align-items:center;
+                    justify-content:center;
+                    padding:24px;
+                "
+            >
+                <div
+                    class="card"
+                    style="
+                        width:min(720px,100%);
+                        max-height:90vh;
+                        overflow:auto;
+                        position:relative;
+                    "
+                >
+                    <button
+                        type="button"
+                        class="btn alt"
+                        onclick="closeAlertModal()"
+                        style="position:absolute;right:18px;top:18px"
+                    >
+                        Close
+                    </button>
+
+                    <h2 id="alertTitle">Alert details</h2>
+
+                    <div style="margin-top:20px">
+                        <p><b>Severity:</b> <span id="alertSeverity"></span></p>
+                        <p><b>Principal:</b> <span id="alertPrincipal"></span></p>
+                        <p><b>Status:</b> <span id="alertStatus"></span></p>
+                        <p><b>Created:</b> <span id="alertCreated"></span></p>
+                    </div>
+
+                    <div class="finding" style="margin-top:18px">
+                        <b>Finding</b>
+                        <span class="muted" id="alertDetail"></span>
+                    </div>
+
+                    <div class="finding" style="margin-top:12px">
+                        <b>Recommended action</b>
+                        <span class="muted" id="alertRecommendation"></span>
+                    </div>
+
+                    <div style="margin-top:18px">
+                        <button
+                            id="alertCloseButton"
+                            type="button"
+                            class="btn"
+                            onclick="closeCurrentAlert()"
+                        >
+                            Close Alert
+                        </button>
+                    </div>
+                </div>
             </div>
         </section>
 
