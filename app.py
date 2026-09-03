@@ -1722,6 +1722,8 @@ textarea.field{min-height:180px;resize:vertical}
                 <strong>Safer caption suggestion</strong>
                 <div id="saferCaption" style="margin-top:8px"></div>
                 <div class="actions">
+                    <button type="button" class="btn" id="generateSafer">Generate Safer Caption</button>
+                    <button type="button" class="btn secondary" id="rescanSafer">Re-scan Safer Caption</button>
                     <button type="button" class="btn secondary" id="copySafer">Copy safer caption</button>
                 </div>
             </div>
@@ -1743,6 +1745,8 @@ const decisionTitle = document.getElementById("decisionTitle");
 const decisionText = document.getElementById("decisionText");
 const saferBox = document.getElementById("saferBox");
 const saferCaptionEl = document.getElementById("saferCaption");
+const generateSafer = document.getElementById("generateSafer");
+const rescanSafer = document.getElementById("rescanSafer");
 const copySafer = document.getElementById("copySafer");
 const button = document.getElementById("scanButton");
 
@@ -1825,18 +1829,7 @@ form.addEventListener("submit", async (event) => {
                 </div>
             `).join("");
 
-            const original = document.getElementById("caption").value.trim();
-            let safer = original;
-            const sensitivePatterns = [
-                /\b(gate code|entry code|alarm code|passcode|password|pin)\s*(is|:)?\s*[A-Za-z0-9-]+/gi,
-                /\b(i am at|i'm at|currently at|here at|just arrived at|right now at|live from)\b[^.!?]*/gi,
-                /\b(address|postcode|post code|house number)\s*(is|:)?\s*[^,.!?]+/gi
-            ];
-            sensitivePatterns.forEach(pattern => { safer = safer.replace(pattern, "[sensitive detail removed]"); });
-            if (safer === original && (risk === "HIGH" || risk === "CRITICAL")) {
-                safer = "Sharing an update — keeping private security, location and personal details offline.";
-            }
-            saferCaptionEl.textContent = safer || "Share the update without private location, security, family, travel or access details.";
+            saferCaptionEl.textContent = "Click Generate Safer Caption to create a safer version of your post.";
             saferBox.style.display = "block";
         }
     } catch (error) {
@@ -1852,6 +1845,61 @@ form.addEventListener("submit", async (event) => {
         button.disabled = false;
         button.textContent = "Run PostGuard Check";
     }
+});
+
+
+function buildSaferCaption(original) {
+    let safer = (original || "").trim();
+
+    const replacements = [
+        [/\b(gate code|entry code|alarm code|passcode|password|pin)\s*(is|:)?\s*[A-Za-z0-9-]+/gi, ""],
+        [/\b(my|our)\s+(home|house|address)\s+(is|at)\s+[^,.!?]+/gi, ""],
+        [/\b(i am at|i'm at|currently at|here at|just arrived at|right now at|live from)\b[^.!?]*/gi, ""],
+        [/\b(address|postcode|post code|house number)\s*(is|:)?\s*[^,.!?]+/gi, ""],
+        [/\b(leaving|flying|travelling|traveling|going)\s+(today|tomorrow|tonight)\b[^.!?]*/gi, ""],
+        [/\b(security|bodyguard|guard|alarm|camera|cctv)\b[^.!?]*/gi, ""]
+    ];
+
+    replacements.forEach(([pattern, replacement]) => {
+        safer = safer.replace(pattern, replacement);
+    });
+
+    safer = safer
+        .replace(/\s{2,}/g, " ")
+        .replace(/\s+([,.!?])/g, "$1")
+        .replace(/^[\s,.;:-]+|[\s,.;:-]+$/g, "")
+        .trim();
+
+    if (!safer || safer.length < 8) {
+        safer = "Sharing an update while keeping private location and security details offline.";
+    }
+
+    return safer;
+}
+
+generateSafer.addEventListener("click", () => {
+    const original = document.getElementById("caption").value;
+    const safer = buildSaferCaption(original);
+
+    saferCaptionEl.textContent = safer;
+    generateSafer.textContent = "Regenerate Safer Caption";
+
+    if (safer === original.trim()) {
+        saferCaptionEl.textContent =
+            "Sharing an update while keeping private location, security, family and access details offline.";
+    }
+});
+
+rescanSafer.addEventListener("click", () => {
+    const safer = saferCaptionEl.textContent.trim();
+
+    if (!safer || safer.startsWith("Click Generate")) {
+        saferCaptionEl.textContent = "Generate a safer caption first.";
+        return;
+    }
+
+    document.getElementById("caption").value = safer;
+    form.requestSubmit();
 });
 
 copySafer.addEventListener("click", async () => {
@@ -3122,7 +3170,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="5.2.1",
+        version="5.3",
     )
 
 
