@@ -756,20 +756,22 @@ body{
     border-right:1px solid rgba(135,173,255,.12);
 }
 .brand{display:flex;align-items:center;gap:12px;font-weight:850;letter-spacing:.02em;font-size:1.15rem}
-.logo{
-    width:38px;height:38px;border-radius:11px;
-    display:grid;place-items:center;
-    background:linear-gradient(145deg,#17345f,#0d203c);
-    border:1px solid #315787;
-    box-shadow:0 10px 30px rgba(0,0,0,.22);
+.brand-mark{
+    width:48px;height:48px;object-fit:cover;border-radius:50%;
+    border:1px solid #315787;box-shadow:0 10px 30px rgba(0,0,0,.22)
 }
-.logo svg{width:22px;height:22px}
-.hero-copy{max-width:720px;margin:70px 0}
+.hero-copy{max-width:720px;margin:48px 0}
+.hero-logo-wrap{display:flex;justify-content:flex-start;margin-bottom:28px}
+.hero-logo{
+    width:min(330px,68vw);aspect-ratio:1/1;object-fit:cover;border-radius:50%;
+    border:1px solid rgba(135,173,255,.28);
+    box-shadow:0 24px 70px rgba(0,0,0,.42),0 0 80px rgba(49,101,191,.10);
+}
 .eyebrow{
     color:var(--blue);font-size:.78rem;text-transform:uppercase;
     letter-spacing:.16em;font-weight:800;margin-bottom:18px
 }
-h1{font-size:clamp(2.8rem,6vw,5.6rem);line-height:.98;letter-spacing:-.055em;margin:0 0 24px}
+h1{font-size:clamp(2.7rem,5vw,4.9rem);line-height:.98;letter-spacing:-.055em;margin:0 0 24px}
 .hero p{color:#bdc8d8;font-size:1.12rem;line-height:1.75;max-width:640px;margin:0}
 .points{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:34px}
 .point{
@@ -839,7 +841,8 @@ input::placeholder{color:#61748f}
 @media(max-width:980px){
     .page{grid-template-columns:1fr}
     .hero{padding:32px 24px;border-right:0;border-bottom:1px solid rgba(135,173,255,.12)}
-    .hero-copy{margin:48px 0 30px}
+    .hero-copy{margin:38px 0 30px}
+    .hero-logo{width:min(260px,72vw)}
     h1{font-size:clamp(2.6rem,11vw,4.6rem)}
     .points{grid-template-columns:1fr}
     .auth-side{padding:28px 18px 48px}
@@ -850,16 +853,14 @@ input::placeholder{color:#61748f}
 <div class="page">
     <section class="hero">
         <div class="brand">
-            <div class="logo" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none">
-                    <path d="M12 2.5 19 5.4v5.5c0 4.7-2.8 8.5-7 10.6-4.2-2.1-7-5.9-7-10.6V5.4L12 2.5Z" stroke="#b9d0ff" stroke-width="1.7"/>
-                    <path d="m8.7 12 2.1 2.1 4.7-5" stroke="#7fe0ae" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-            </div>
-            POSTGUARD
+            <img class="brand-mark" src="{{ url_for('static', filename='postguard_logo.jpg') }}" alt="PostGuard logo">
+            <span>POSTGUARD</span>
         </div>
 
         <div class="hero-copy">
+            <div class="hero-logo-wrap">
+                <img class="hero-logo" src="{{ url_for('static', filename='postguard_logo.jpg') }}" alt="PostGuard — Protect What You Post">
+            </div>
             <div class="eyebrow">Personal digital risk protection</div>
             <h1>Protect what<br>you post.</h1>
             <p>
@@ -4510,7 +4511,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="6.1",
+        version="6.2",
     )
 
 
