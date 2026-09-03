@@ -104,9 +104,10 @@ async function scan() {
         </div>
     `).join("");
 
+    // Keep the completed scan visible for 10 seconds.
     setTimeout(() => {
         location.reload();
-    }, 1200);
+    }, 10000);
 }
 
 
