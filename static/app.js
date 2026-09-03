@@ -8,6 +8,8 @@ const names = {
     audit: "Audit Log"
 };
 
+let currentAlertId = null;
+
 function show(id, el) {
     document.querySelectorAll(".page").forEach(x => x.classList.remove("active"));
     document.getElementById(id).classList.add("active");
@@ -88,16 +90,99 @@ async function scan() {
     }, 1200);
 }
 
+
+// ============================================================
+// ALERT DETAILS
+// ============================================================
+
+function openAlert(
+    id,
+    severity,
+    category,
+    principal,
+    detail,
+    recommendation,
+    status,
+    createdAt
+) {
+    currentAlertId = id;
+
+    document.getElementById("alertTitle").textContent =
+        category || "Alert details";
+
+    document.getElementById("alertSeverity").textContent =
+        severity || "Unknown";
+
+    document.getElementById("alertPrincipal").textContent =
+        principal || "Unassigned";
+
+    document.getElementById("alertStatus").textContent =
+        status || "Unknown";
+
+    document.getElementById("alertCreated").textContent =
+        createdAt || "Unknown";
+
+    document.getElementById("alertDetail").textContent =
+        detail || "No detail recorded.";
+
+    document.getElementById("alertRecommendation").textContent =
+        recommendation || "No recommendation recorded.";
+
+    const closeButton =
+        document.getElementById("alertCloseButton");
+
+    if (status === "Open") {
+        closeButton.style.display = "inline-block";
+    } else {
+        closeButton.style.display = "none";
+    }
+
+    const modal =
+        document.getElementById("alertModal");
+
+    modal.style.display = "flex";
+}
+
+
+function closeAlertModal() {
+    currentAlertId = null;
+
+    document.getElementById("alertModal").style.display =
+        "none";
+}
+
+
+async function closeCurrentAlert() {
+    if (!currentAlertId) {
+        return;
+    }
+
+    await closeAlert(currentAlertId);
+}
+
+
 async function closeAlert(id) {
-    await fetch("/api/alerts/" + id + "/close", {
-        method: "POST",
-        headers: {
-            "X-CSRFToken": window.POSTGUARD_CSRF
+    const r = await fetch(
+        "/api/alerts/" + id + "/close",
+        {
+            method: "POST",
+            headers: {
+                "X-CSRFToken": window.POSTGUARD_CSRF
+            }
         }
-    });
+    );
+
+    if (!r.ok) {
+        return alert("Could not close alert.");
+    }
 
     location.reload();
 }
+
+
+// ============================================================
+// CASES
+// ============================================================
 
 async function newCase() {
     const title = prompt("Case title");
@@ -112,22 +197,33 @@ async function newCase() {
             "Content-Type": "application/json",
             "X-CSRFToken": window.POSTGUARD_CSRF
         },
-        body: JSON.stringify({ title })
+        body: JSON.stringify({
+            title
+        })
     });
 
     location.reload();
 }
+
 
 async function closeCase(id) {
-    await fetch("/api/cases/" + id + "/close", {
-        method: "POST",
-        headers: {
-            "X-CSRFToken": window.POSTGUARD_CSRF
+    await fetch(
+        "/api/cases/" + id + "/close",
+        {
+            method: "POST",
+            headers: {
+                "X-CSRFToken": window.POSTGUARD_CSRF
+            }
         }
-    });
+    );
 
     location.reload();
 }
+
+
+// ============================================================
+// PRINCIPALS
+// ============================================================
 
 async function addPrincipal() {
     const name = prompt("Principal name");
@@ -136,7 +232,9 @@ async function addPrincipal() {
         return;
     }
 
-    const role = prompt("Role", "Executive") || "Executive";
+    const role =
+        prompt("Role", "Executive") ||
+        "Executive";
 
     await fetch("/api/principals", {
         method: "POST",
@@ -153,6 +251,11 @@ async function addPrincipal() {
     location.reload();
 }
 
+
+// ============================================================
+// MONITORING SOURCES
+// ============================================================
+
 async function addSource() {
     const name = prompt("Source name");
 
@@ -161,7 +264,10 @@ async function addSource() {
     }
 
     const kind =
-        prompt("Source type", "Authorised social source") ||
+        prompt(
+            "Source type",
+            "Authorised social source"
+        ) ||
         "Authorised source";
 
     await fetch("/api/sources", {
@@ -179,6 +285,11 @@ async function addSource() {
     location.reload();
 }
 
+
+// ============================================================
+// AUDIT LOG
+// ============================================================
+
 async function loadAudit() {
     const r = await fetch("/api/audit");
     const d = await r.json();
@@ -188,3 +299,17 @@ async function loadAudit() {
             `${x.created_at} | ${x.email} | ${x.action} | ${x.detail}`
         ).join("\n") || "No events.";
 }
+
+
+// ============================================================
+// KEYBOARD CONTROLS
+// ============================================================
+
+document.addEventListener(
+    "keydown",
+    event => {
+        if (event.key === "Escape") {
+            closeAlertModal();
+        }
+    }
+);
