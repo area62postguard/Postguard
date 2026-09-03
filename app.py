@@ -2793,6 +2793,10 @@ a{color:inherit}.main{max-width:1000px;margin:auto;padding:30px 20px}
     {% if check %}
     <a class="btn" href="{{ url_for('scan_history_detail', check_id=check['id']) }}">View scan history</a>
     {% endif %}
+    <form method="post" action="{{ url_for('customer_create_case_from_alert', alert_id=alert['id']) }}" style="margin:0">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn" type="submit">Create / Open Case</button>
+    </form>
 </div>
 </main>
 </body>
@@ -2998,6 +3002,292 @@ def alert_to_case(alert_id):
     return jsonify(
         ok=True,
         case_id=case_id,
+    )
+
+
+
+CUSTOMER_CASE_DETAIL_PAGE = """
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PostGuard · Case</title>
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#09101d;color:#f5f7fb}
+a{color:inherit}.main{max-width:1000px;margin:auto;padding:30px 20px}
+.top{display:flex;justify-content:space-between;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:22px}
+.actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.card{background:#111a2b;border:1px solid #22304a;border-radius:16px;padding:20px;margin-bottom:16px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.metric{background:#0d1525;border:1px solid #2c3a55;border-radius:12px;padding:16px}
+.metric .value{font-size:1.15rem;font-weight:800;margin-top:5px;overflow-wrap:anywhere}
+.muted{color:#95a4ba}.danger{color:#ff8c8c}.warn{color:#f6c56f}.safe{color:#7dd3a7}
+.btn{display:inline-block;padding:10px 14px;border-radius:10px;border:1px solid #31415e;background:#151f33;color:#fff;text-decoration:none;font-weight:700;cursor:pointer}
+textarea,select{width:100%;padding:12px;border-radius:10px;border:1px solid #31415e;background:#0d1525;color:#fff}
+label{display:block;font-weight:700;margin-bottom:7px}
+.field{margin-top:14px}
+.caption{white-space:pre-wrap;overflow-wrap:anywhere}
+@media(max-width:700px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main class="main">
+<div class="top">
+    <div>
+        <div class="muted">PostGuard customer case</div>
+        <h1 style="margin:.2rem 0">Case #{{ case['id'] }}</h1>
+    </div>
+    <div class="actions">
+        <a class="btn" href="{{ url_for('home') }}">Dashboard</a>
+        <form method="post" action="{{ url_for('logout') }}" style="margin:0">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn" type="submit">Log out</button>
+        </form>
+    </div>
+</div>
+
+<div class="grid">
+    <div class="metric"><div class="muted">Status</div><div class="value">{{ case['status'] or 'Open' }}</div></div>
+    <div class="metric"><div class="muted">Severity</div><div class="value">{{ case['severity'] or '—' }}</div></div>
+    <div class="metric"><div class="muted">Created</div><div class="value" style="font-size:1rem">{{ case['created_at'] }}</div></div>
+</div>
+
+<section class="card" style="margin-top:16px">
+    <h2>{{ case['title'] or 'Security case' }}</h2>
+    <div class="muted">{{ case['category'] or 'PostGuard incident management' }}</div>
+    {% if case['notes'] %}
+    <div class="caption" style="margin-top:14px">{{ case['notes'] }}</div>
+    {% endif %}
+</section>
+
+{% if alert %}
+<section class="card">
+    <h2>Linked alert</h2>
+    <div><b>{{ alert['severity'] }}</b> · {{ alert['category'] }}</div>
+    <div class="muted" style="margin-top:6px">{{ alert['created_at'] }}</div>
+    <div style="margin-top:12px">
+        <a class="btn" href="{{ url_for('customer_alert_detail', alert_id=alert['id']) }}">Open alert</a>
+    </div>
+</section>
+{% endif %}
+
+{% if check %}
+<section class="card">
+    <h2>Linked scan</h2>
+    <div><b>{{ check['score'] }}/100 · {{ check['risk'] }}</b></div>
+    <div class="caption" style="margin-top:10px">{{ check['caption'] or 'No caption supplied.' }}</div>
+    <div style="margin-top:12px">
+        <a class="btn" href="{{ url_for('scan_history_detail', check_id=check['id']) }}">Open scan</a>
+    </div>
+</section>
+{% endif %}
+
+<section class="card">
+    <h2>Update case</h2>
+    <form method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <div class="field">
+            <label for="status">Status</label>
+            <select id="status" name="status">
+                {% for option in ('Open','Investigating','Monitoring','Resolved','Closed') %}
+                <option value="{{ option }}" {% if case['status']==option %}selected{% endif %}>{{ option }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="field">
+            <label for="notes">Case notes</label>
+            <textarea id="notes" name="notes" rows="7" placeholder="Add investigation notes, actions taken or resolution details...">{{ case['notes'] or '' }}</textarea>
+        </div>
+
+        <div class="actions" style="margin-top:14px">
+            <button class="btn" type="submit">Save case</button>
+        </div>
+    </form>
+</section>
+</main>
+</body>
+</html>
+"""
+
+
+@app.post("/alerts/<int:alert_id>/create-case")
+@auth
+@limiter.limit("10 per minute")
+def customer_create_case_from_alert(alert_id):
+    c = db()
+    try:
+        if session.get("role") == "admin":
+            alert = c.execute(
+                "SELECT * FROM alerts WHERE id=?",
+                (alert_id,),
+            ).fetchone()
+        else:
+            alert = c.execute(
+                "SELECT * FROM alerts WHERE id=? AND user_id=?",
+                (alert_id, session["uid"]),
+            ).fetchone()
+
+        if not alert:
+            abort(404)
+
+        existing = c.execute(
+            "SELECT * FROM cases WHERE alert_id=? AND user_id=? ORDER BY id DESC LIMIT 1",
+            (alert_id, alert["user_id"]),
+        ).fetchone()
+
+        if existing:
+            return redirect(url_for("customer_case_detail", case_id=existing["id"]))
+
+        title = f"{alert['category'] or 'Security'} alert"
+        notes = (
+            "Created from PostGuard alert. "
+            + (alert["recommendation"] or "Review the alert and record actions taken.")
+        )
+
+        case_row = c.execute(
+            """
+            INSERT INTO cases(
+                user_id,
+                principal_id,
+                alert_id,
+                title,
+                category,
+                severity,
+                status,
+                notes,
+                created_at
+            )
+            VALUES(?,?,?,?,?,?,?,?,?)
+            RETURNING *
+            """,
+            (
+                alert["user_id"],
+                alert["principal_id"],
+                alert["id"],
+                title,
+                alert["category"],
+                alert["severity"],
+                "Open",
+                notes,
+                now(),
+            ),
+        ).fetchone()
+
+        c.execute(
+            "UPDATE alerts SET status='In Case' WHERE id=?",
+            (alert_id,),
+        )
+        c.commit()
+
+        return redirect(url_for("customer_case_detail", case_id=case_row["id"]))
+    finally:
+        c.close()
+
+
+@app.route("/cases/<int:case_id>", methods=["GET", "POST"])
+@auth
+@limiter.limit("20 per minute")
+def customer_case_detail(case_id):
+    c = db()
+    try:
+        if session.get("role") == "admin":
+            case = c.execute(
+                "SELECT * FROM cases WHERE id=?",
+                (case_id,),
+            ).fetchone()
+        else:
+            case = c.execute(
+                "SELECT * FROM cases WHERE id=? AND user_id=?",
+                (case_id, session["uid"]),
+            ).fetchone()
+
+        if not case:
+            abort(404)
+
+        if request.method == "POST":
+            allowed_statuses = {
+                "Open",
+                "Investigating",
+                "Monitoring",
+                "Resolved",
+                "Closed",
+            }
+            status = request.form.get("status", "Open").strip()
+            notes = request.form.get("notes", "").strip()
+
+            if status not in allowed_statuses:
+                return "Invalid case status", 400
+
+            if session.get("role") == "admin":
+                c.execute(
+                    "UPDATE cases SET status=?, notes=? WHERE id=?",
+                    (status, notes, case_id),
+                )
+            else:
+                c.execute(
+                    "UPDATE cases SET status=?, notes=? WHERE id=? AND user_id=?",
+                    (status, notes, case_id, session["uid"]),
+                )
+
+            if case["alert_id"]:
+                alert_status = "Resolved" if status in ("Resolved", "Closed") else "In Case"
+                c.execute(
+                    "UPDATE alerts SET status=? WHERE id=?",
+                    (alert_status, case["alert_id"]),
+                )
+
+            c.commit()
+
+            if session.get("role") == "admin":
+                case = c.execute(
+                    "SELECT * FROM cases WHERE id=?",
+                    (case_id,),
+                ).fetchone()
+            else:
+                case = c.execute(
+                    "SELECT * FROM cases WHERE id=? AND user_id=?",
+                    (case_id, session["uid"]),
+                ).fetchone()
+
+        alert = None
+        check = None
+
+        if case["alert_id"]:
+            if session.get("role") == "admin":
+                alert = c.execute(
+                    "SELECT * FROM alerts WHERE id=?",
+                    (case["alert_id"],),
+                ).fetchone()
+            else:
+                alert = c.execute(
+                    "SELECT * FROM alerts WHERE id=? AND user_id=?",
+                    (case["alert_id"], session["uid"]),
+                ).fetchone()
+
+        if alert and alert["check_id"]:
+            if session.get("role") == "admin":
+                check = c.execute(
+                    "SELECT * FROM checks WHERE id=?",
+                    (alert["check_id"],),
+                ).fetchone()
+            else:
+                check = c.execute(
+                    "SELECT * FROM checks WHERE id=? AND user_id=?",
+                    (alert["check_id"], session["uid"]),
+                ).fetchone()
+    finally:
+        c.close()
+
+    return render_template_string(
+        CUSTOMER_CASE_DETAIL_PAGE,
+        case=case,
+        alert=alert,
+        check=check,
     )
 
 
@@ -3755,7 +4045,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="5.8",
+        version="5.9",
     )
 
 
