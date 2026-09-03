@@ -827,6 +827,159 @@ def home():
     )
 
 
+
+# ============================================================
+# PRINCIPAL PROFILE / RECORD
+# ============================================================
+
+@app.get("/principals/<int:principal_id>")
+@auth
+def principal_profile(principal_id):
+    c = db()
+
+    principal = c.execute(
+        """
+        SELECT *
+        FROM principals
+        WHERE id=?
+        """,
+        (principal_id,),
+    ).fetchone()
+
+    if not principal:
+        c.close()
+        abort(404)
+
+    checks = c.execute(
+        """
+        SELECT *
+        FROM checks
+        WHERE principal_id=?
+        ORDER BY id DESC
+        LIMIT 100
+        """,
+        (principal_id,),
+    ).fetchall()
+
+    alerts = c.execute(
+        """
+        SELECT *
+        FROM alerts
+        WHERE principal_id=?
+        ORDER BY id DESC
+        LIMIT 100
+        """,
+        (principal_id,),
+    ).fetchall()
+
+    c.close()
+
+    return render_template(
+        "principal.html",
+        principal=principal,
+        checks=checks,
+        alerts=alerts,
+    )
+
+
+@app.post("/api/principals/<int:principal_id>/publish")
+@auth
+def publish_principal_post(principal_id):
+    """
+    Safe publishing gate.
+
+    This endpoint deliberately does not pretend to publish to a social
+    network. Real posting requires an authorised OAuth connection and the
+    official API for the chosen platform.
+
+    For now it validates the requested post and returns the security result.
+    The UI only enables real publishing once a provider integration exists.
+    """
+    c = db()
+
+    principal = c.execute(
+        "SELECT * FROM principals WHERE id=?",
+        (principal_id,),
+    ).fetchone()
+
+    c.close()
+
+    if not principal:
+        return jsonify(error="Principal not found."), 404
+
+    platform = request.form.get(
+        "platform",
+        "",
+    ).strip().lower()
+
+    caption = request.form.get(
+        "caption",
+        "",
+    ).strip()
+
+    allowed_platforms = {
+        "instagram",
+        "facebook",
+        "x",
+        "linkedin",
+        "tiktok",
+    }
+
+    if platform not in allowed_platforms:
+        return jsonify(
+            error="Choose a supported social platform."
+        ), 400
+
+    if not caption and not request.files.get("image"):
+        return jsonify(
+            error="Add a caption or image before publishing."
+        ), 400
+
+    score, findings = caption_scan(caption)
+
+    severities = {
+        finding.get("severity")
+        for finding in findings
+    }
+
+    if "CRITICAL" in severities:
+        score = max(score, 80)
+    elif "HIGH" in severities:
+        score = max(score, 60)
+
+    risk_level = risk(score)
+
+    # Publishing is blocked for HIGH / CRITICAL content.
+    if risk_level in ("HIGH", "CRITICAL"):
+        return jsonify(
+            ok=False,
+            blocked=True,
+            score=score,
+            risk=risk_level,
+            findings=findings,
+            error=(
+                "PostGuard blocked publishing because this post "
+                "contains high-risk information."
+            ),
+        ), 409
+
+    # No social OAuth providers are configured in this MVP yet.
+    # Return a clear response rather than pretending the post was published.
+    return jsonify(
+        ok=False,
+        blocked=False,
+        connection_required=True,
+        score=score,
+        risk=risk_level,
+        findings=findings,
+        platform=platform,
+        message=(
+            "Security check passed. Connect the authorised "
+            f"{platform.title()} account before publishing."
+        ),
+    ), 501
+
+
 # ============================================================
 # POST / IMAGE SCANNER
 # ============================================================
