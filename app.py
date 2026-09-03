@@ -1179,7 +1179,7 @@ tr:last-child td{border-bottom:0}
     <div class="brand">POST<span>GUARD</span></div>
     <nav class="nav">
         <a class="active" href="{{ url_for('home') }}">Dashboard</a>
-        <a href="{{ url_for('home') }}#check-post">Check a Post</a>
+        <a href="{{ url_for('check_post') }}">Check a Post</a>
         <a href="{{ url_for('home') }}#active-alerts">Alerts</a>
         <a href="{{ url_for('home') }}#recent-cases">Cases</a>
         <a href="{{ url_for('account') }}">My Account</a>
@@ -1195,7 +1195,7 @@ tr:last-child td{border-bottom:0}
         </div>
         <div class="actions">
             <a class="btn" href="{{ url_for('account') }}">My Account</a>
-            <a class="btn primary" href="{{ url_for('home') }}#check-post">Check a Post</a>
+            <a class="btn primary" href="{{ url_for('check_post') }}">Check a Post</a>
         </div>
     </div>
 
@@ -1244,7 +1244,7 @@ tr:last-child td{border-bottom:0}
         <div class="panel">
             <h2>Quick actions</h2>
             <div class="quick">
-                <a href="{{ url_for('home') }}#check-post">
+                <a href="{{ url_for('check_post') }}">
                     <strong>Check a Post</strong>
                     <span class="muted">Scan a caption or image before publishing.</span>
                 </a>
@@ -1614,6 +1614,230 @@ def publish_principal_post(principal_id):
             f"{platform.title()} account before publishing."
         ),
     ), 501
+
+
+
+CUSTOMER_CHECK_POST_PAGE = """
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PostGuard · Check a Post</title>
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#09101d;color:#f5f7fb}
+a{color:inherit}
+.shell{display:grid;grid-template-columns:240px 1fr;min-height:100vh}
+.sidebar{background:#0d1525;border-right:1px solid #22304a;padding:24px 18px}
+.brand{font-size:1.25rem;font-weight:800;letter-spacing:.03em;margin-bottom:28px}
+.brand span{color:#8cb4ff}
+.nav{display:grid;gap:8px}
+.nav a{padding:11px 12px;border-radius:10px;text-decoration:none;color:#c9d3e5}
+.nav a:hover,.nav .active{background:#17233a;color:#fff}
+.main{padding:28px;max-width:1200px;width:100%}
+.top{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:24px}
+.eyebrow{color:#8ea0ba;font-size:.85rem;text-transform:uppercase;letter-spacing:.08em}
+h1{margin:.2rem 0 0;font-size:2rem}
+.muted{color:#95a4ba}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.card{background:#111a2b;border:1px solid #22304a;border-radius:16px;padding:20px}
+label{display:block;font-weight:700;margin:14px 0 7px}
+.field{width:100%;padding:12px;border-radius:10px;border:1px solid #31415e;background:#0d1525;color:#fff}
+textarea.field{min-height:180px;resize:vertical}
+.btn{display:inline-block;padding:11px 15px;border-radius:10px;border:1px solid #31415e;background:#f5f7fb;color:#0b1020;text-decoration:none;cursor:pointer;font-weight:750}
+.btn.secondary{background:#151f33;color:#fff}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+.result-head{display:flex;align-items:center;gap:16px;margin-bottom:16px}
+.score{width:82px;height:82px;border-radius:50%;display:grid;place-items:center;border:3px solid #40506c;font-size:1.5rem;font-weight:800}
+.finding{border:1px solid #2c3a55;border-radius:12px;padding:14px;margin-top:10px;background:#0d1525}
+.finding strong{display:block;margin-bottom:6px}
+.status{font-size:1.5rem;font-weight:800}
+.safe{color:#7dd3a7}.warn{color:#f6c56f}.danger{color:#ff8c8c}
+.preview{max-width:100%;max-height:260px;border-radius:12px;margin-top:10px;display:none}
+@media(max-width:850px){.shell{grid-template-columns:1fr}.sidebar{display:none}.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="shell">
+<aside class="sidebar">
+    <div class="brand">POST<span>GUARD</span></div>
+    <nav class="nav">
+        <a href="{{ url_for('home') }}">Dashboard</a>
+        <a class="active" href="{{ url_for('check_post') }}">Check a Post</a>
+        <a href="{{ url_for('account') }}">My Account</a>
+    </nav>
+</aside>
+
+<main class="main">
+    <div class="top">
+        <div>
+            <div class="eyebrow">Pre-publication security check</div>
+            <h1>Check a Post</h1>
+            <div class="muted">Scan your proposed caption and image before publishing.</div>
+        </div>
+        <a class="btn secondary" href="{{ url_for('home') }}">Back to Dashboard</a>
+    </div>
+
+    <div class="grid">
+        <section class="card">
+            <form id="scanForm">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                <label for="principal_id">Profile</label>
+                <select id="principal_id" name="principal_id" class="field">
+                    {% for p in principals %}
+                    <option value="{{ p['id'] }}">{{ p['name'] }}</option>
+                    {% endfor %}
+                </select>
+
+                <label for="image">Image</label>
+                <input id="image" name="image" type="file" accept="image/*" class="field">
+                <img id="preview" class="preview" alt="Selected image preview">
+
+                <label for="caption">Caption</label>
+                <textarea id="caption" name="caption" class="field" placeholder="Paste the caption you plan to post..."></textarea>
+
+                <div class="actions">
+                    <button id="scanButton" class="btn" type="submit">Run PostGuard Check</button>
+                </div>
+            </form>
+        </section>
+
+        <section class="card">
+            <div class="result-head">
+                <div class="score" id="score">--</div>
+                <div>
+                    <div class="status" id="risk">Awaiting scan</div>
+                    <div class="muted" id="summary">PostGuard will explain any privacy or security exposure detected.</div>
+                </div>
+            </div>
+            <div id="findings"></div>
+        </section>
+    </div>
+</main>
+</div>
+
+<script>
+const form = document.getElementById("scanForm");
+const imageInput = document.getElementById("image");
+const preview = document.getElementById("preview");
+const scoreEl = document.getElementById("score");
+const riskEl = document.getElementById("risk");
+const summaryEl = document.getElementById("summary");
+const findingsEl = document.getElementById("findings");
+const button = document.getElementById("scanButton");
+
+imageInput.addEventListener("change", () => {
+    const file = imageInput.files && imageInput.files[0];
+    if (!file) {
+        preview.style.display = "none";
+        preview.removeAttribute("src");
+        return;
+    }
+    preview.src = URL.createObjectURL(file);
+    preview.style.display = "block";
+});
+
+form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    button.disabled = true;
+    button.textContent = "Scanning...";
+    findingsEl.innerHTML = "";
+    summaryEl.textContent = "Analysing your post...";
+
+    try {
+        const response = await fetch("/api/scan", {
+            method: "POST",
+            body: new FormData(form),
+            credentials: "same-origin"
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || "The scan could not be completed.");
+        }
+
+        scoreEl.textContent = (data.score ?? 0) + "/100";
+        riskEl.textContent = data.risk || "UNKNOWN";
+
+        const risk = (data.risk || "").toUpperCase();
+        riskEl.className = "status " + (
+            risk === "LOW" ? "safe" :
+            risk === "MODERATE" ? "warn" :
+            "danger"
+        );
+
+        if (risk === "HIGH" || risk === "CRITICAL") {
+            summaryEl.textContent = "PostGuard recommends that you do not publish this post yet.";
+        } else if (risk === "MODERATE") {
+            summaryEl.textContent = "Review the findings before publishing.";
+        } else {
+            summaryEl.textContent = "No major exposure was detected by the current PostGuard checks.";
+        }
+
+        const findings = data.findings || [];
+        if (!findings.length) {
+            findingsEl.innerHTML = '<div class="finding"><strong>No findings</strong><span class="muted">No specific risk rules were triggered.</span></div>';
+        } else {
+            findingsEl.innerHTML = findings.map(f => `
+                <div class="finding">
+                    <strong>${escapeHtml(f.category || f.title || "Security finding")}</strong>
+                    <div>${escapeHtml(f.detail || "")}</div>
+                    <div class="muted" style="margin-top:7px">${escapeHtml(f.recommendation || "")}</div>
+                </div>
+            `).join("");
+        }
+    } catch (error) {
+        scoreEl.textContent = "--";
+        riskEl.textContent = "Scan failed";
+        riskEl.className = "status danger";
+        summaryEl.textContent = error.message;
+    } finally {
+        button.disabled = false;
+        button.textContent = "Run PostGuard Check";
+    }
+});
+
+function escapeHtml(value) {
+    const div = document.createElement("div");
+    div.textContent = value == null ? "" : String(value);
+    return div.innerHTML;
+}
+</script>
+</body>
+</html>
+"""
+
+
+@app.get("/check-post")
+@auth
+def check_post():
+    c = db()
+
+    if session.get("role") == "admin":
+        principals = c.execute(
+            "SELECT * FROM principals ORDER BY id DESC"
+        ).fetchall()
+    else:
+        principals = c.execute(
+            """
+            SELECT *
+            FROM principals
+            WHERE user_id=?
+            ORDER BY id DESC
+            """,
+            (session["uid"],),
+        ).fetchall()
+
+    c.close()
+
+    return render_template_string(
+        CUSTOMER_CHECK_POST_PAGE,
+        principals=principals,
+    )
 
 
 # ============================================================
@@ -2835,7 +3059,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="5.0.2",
+        version="5.1",
     )
 
 
