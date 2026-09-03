@@ -1193,6 +1193,7 @@ tr:last-child td{border-bottom:0}
         <a href="{{ url_for('check_post') }}">Check a Post</a>
         <a href="{{ url_for('home') }}#active-alerts">Alerts</a>
         <a href="{{ url_for('home') }}#recent-cases">Cases</a>
+        <a href="{{ url_for('customer_cases_list') }}">My Cases</a>
         <a href="{{ url_for('account') }}">My Account</a>
         <form method="post" action="{{ url_for('logout') }}" style="margin:8px 0 0">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -2122,7 +2123,8 @@ a{color:inherit}.main{max-width:1000px;margin:auto;padding:30px 20px}
 
 <div style="display:flex;gap:10px;flex-wrap:wrap">
     <a class="btn" href="{{ url_for('check_post') }}">Check another post</a>
-    <a class="btn" href="{{ url_for('home') }}">Dashboard</a>
+    <a class="btn" href="{{ url_for('customer_cases_list') }}">My Cases</a>
+        <a class="btn" href="{{ url_for('home') }}">Dashboard</a>
 </div>
 </main>
 </body>
@@ -3300,6 +3302,170 @@ def customer_case_detail(case_id):
     )
 
 
+
+CUSTOMER_CASES_LIST_PAGE = """
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PostGuard · My Cases</title>
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#09101d;color:#f5f7fb}
+a{color:inherit}.main{max-width:1100px;margin:auto;padding:30px 20px}
+.top{display:flex;justify-content:space-between;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:22px}
+.actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.card{background:#111a2b;border:1px solid #22304a;border-radius:16px;padding:20px;margin-bottom:16px}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.metric{background:#0d1525;border:1px solid #2c3a55;border-radius:12px;padding:16px}
+.metric .value{font-size:1.5rem;font-weight:800;margin-top:5px}
+.muted{color:#95a4ba}.btn{display:inline-block;padding:10px 14px;border-radius:10px;border:1px solid #31415e;background:#151f33;color:#fff;text-decoration:none;font-weight:700;cursor:pointer}
+.case{display:block;background:#0d1525;border:1px solid #2c3a55;border-radius:12px;padding:16px;text-decoration:none;margin-top:10px}
+.case:hover{border-color:#4b5f86}
+.row{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;flex-wrap:wrap}
+.badge{padding:5px 9px;border-radius:999px;border:1px solid #33435f;font-size:.83rem;font-weight:800}
+.open{color:#ffb1b1}.investigating{color:#ffd27a}.monitoring{color:#9ec8ff}.resolved,.closed{color:#8ee0b5}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.filters a{padding:8px 11px;border-radius:9px;border:1px solid #31415e;text-decoration:none}
+@media(max-width:800px){.grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:500px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main class="main">
+<div class="top">
+    <div>
+        <div class="muted">PostGuard incident management</div>
+        <h1 style="margin:.2rem 0">My Cases</h1>
+    </div>
+    <div class="actions">
+        <a class="btn" href="{{ url_for('home') }}">Dashboard</a>
+        <a class="btn" href="{{ url_for('check_post') }}">Check a Post</a>
+        <form method="post" action="{{ url_for('logout') }}" style="margin:0">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn" type="submit">Log out</button>
+        </form>
+    </div>
+</div>
+
+<div class="grid">
+    <div class="metric"><div class="muted">Open</div><div class="value">{{ counts['Open'] }}</div></div>
+    <div class="metric"><div class="muted">Investigating</div><div class="value">{{ counts['Investigating'] }}</div></div>
+    <div class="metric"><div class="muted">Monitoring</div><div class="value">{{ counts['Monitoring'] }}</div></div>
+    <div class="metric"><div class="muted">Resolved / Closed</div><div class="value">{{ counts['Resolved'] + counts['Closed'] }}</div></div>
+</div>
+
+<section class="card" style="margin-top:16px">
+    <div class="row">
+        <div>
+            <h2 style="margin:0">Cases</h2>
+            <div class="muted">Open a case to review notes, linked alerts and status.</div>
+        </div>
+        <div class="filters">
+            <a href="{{ url_for('customer_cases_list') }}">All</a>
+            <a href="{{ url_for('customer_cases_list', status='Open') }}">Open</a>
+            <a href="{{ url_for('customer_cases_list', status='Investigating') }}">Investigating</a>
+            <a href="{{ url_for('customer_cases_list', status='Monitoring') }}">Monitoring</a>
+            <a href="{{ url_for('customer_cases_list', status='Resolved') }}">Resolved</a>
+            <a href="{{ url_for('customer_cases_list', status='Closed') }}">Closed</a>
+        </div>
+    </div>
+
+    {% if cases %}
+        {% for row in cases %}
+        <a class="case" href="{{ url_for('customer_case_detail', case_id=row['id']) }}">
+            <div class="row">
+                <div>
+                    <strong>{{ row['title'] or ('Case #' ~ row['id']) }}</strong>
+                    <div class="muted" style="margin-top:6px">
+                        {{ row['category'] or 'Security case' }}
+                        {% if row['severity'] %} · {{ row['severity'] }}{% endif %}
+                    </div>
+                    <div class="muted" style="margin-top:4px">{{ row['created_at'] }}</div>
+                </div>
+                <span class="badge {{ (row['status'] or 'Open')|lower }}">{{ row['status'] or 'Open' }}</span>
+            </div>
+        </a>
+        {% endfor %}
+    {% else %}
+        <div class="case">
+            <strong>No cases found</strong>
+            <div class="muted" style="margin-top:6px">Create a case from a customer alert when follow-up is needed.</div>
+        </div>
+    {% endif %}
+</section>
+</main>
+</body>
+</html>
+"""
+
+
+@app.get("/my-cases")
+@auth
+def customer_cases_list():
+    requested_status = request.args.get("status", "").strip()
+    allowed_statuses = {"Open", "Investigating", "Monitoring", "Resolved", "Closed"}
+
+    if requested_status and requested_status not in allowed_statuses:
+        requested_status = ""
+
+    c = db()
+    try:
+        if session.get("role") == "admin":
+            if requested_status:
+                cases = c.execute(
+                    "SELECT * FROM cases WHERE status=? ORDER BY id DESC",
+                    (requested_status,),
+                ).fetchall()
+            else:
+                cases = c.execute(
+                    "SELECT * FROM cases ORDER BY id DESC"
+                ).fetchall()
+
+            rows = c.execute(
+                "SELECT status, COUNT(*) AS total FROM cases GROUP BY status"
+            ).fetchall()
+        else:
+            if requested_status:
+                cases = c.execute(
+                    "SELECT * FROM cases WHERE user_id=? AND status=? ORDER BY id DESC",
+                    (session["uid"], requested_status),
+                ).fetchall()
+            else:
+                cases = c.execute(
+                    "SELECT * FROM cases WHERE user_id=? ORDER BY id DESC",
+                    (session["uid"],),
+                ).fetchall()
+
+            rows = c.execute(
+                "SELECT status, COUNT(*) AS total FROM cases WHERE user_id=? GROUP BY status",
+                (session["uid"],),
+            ).fetchall()
+    finally:
+        c.close()
+
+    counts = {
+        "Open": 0,
+        "Investigating": 0,
+        "Monitoring": 0,
+        "Resolved": 0,
+        "Closed": 0,
+    }
+    for row in rows:
+        status = row["status"] or "Open"
+        if status in counts:
+            counts[status] = row["total"]
+
+    return render_template_string(
+        CUSTOMER_CASES_LIST_PAGE,
+        cases=cases,
+        counts=counts,
+        requested_status=requested_status,
+    )
+
+
 # ============================================================
 # CASES
 # ============================================================
@@ -4054,7 +4220,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="5.9.1",
+        version="6.0",
     )
 
 
