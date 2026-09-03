@@ -20,7 +20,11 @@ function show(id, el) {
         x.classList.remove("active");
     });
 
-    document.getElementById(id).classList.add("active");
+    const page = document.getElementById(id);
+
+    if (page) {
+        page.classList.add("active");
+    }
 
     document.querySelectorAll(".nav a").forEach(x => {
         x.classList.remove("active");
@@ -30,7 +34,11 @@ function show(id, el) {
         el.classList.add("active");
     }
 
-    document.getElementById("crumb").textContent = names[id];
+    const crumb = document.getElementById("crumb");
+
+    if (crumb) {
+        crumb.textContent = names[id] || "PostGuard";
+    }
 
     if (id === "audit") {
         loadAudit();
@@ -47,15 +55,26 @@ const preview = document.getElementById("preview");
 const drop = document.getElementById("drop");
 const dropText = document.getElementById("dropText");
 
-drop.onclick = () => image.click();
+if (drop && image) {
+    drop.onclick = () => image.click();
+}
 
-image.onchange = () => {
-    if (image.files[0]) {
-        preview.src = URL.createObjectURL(image.files[0]);
-        preview.style.display = "block";
-        dropText.style.display = "none";
-    }
-};
+if (image) {
+    image.onchange = () => {
+        if (image.files && image.files[0]) {
+            if (preview) {
+                preview.src =
+                    URL.createObjectURL(image.files[0]);
+
+                preview.style.display = "block";
+            }
+
+            if (dropText) {
+                dropText.style.display = "none";
+            }
+        }
+    };
+}
 
 
 // ============================================================
@@ -63,56 +82,111 @@ image.onchange = () => {
 // ============================================================
 
 async function scan() {
+    const captionBox =
+        document.getElementById("caption");
+
+    const principalBox =
+        document.getElementById("principal");
+
+    const scoreBox =
+        document.getElementById("score");
+
+    const riskBox =
+        document.getElementById("risk");
+
+    const summaryBox =
+        document.getElementById("summary");
+
+    const findingsBox =
+        document.getElementById("findings");
+
     const fd = new FormData();
 
-    fd.append("caption", caption.value);
-    fd.append("principal_id", principal.value);
+    fd.append(
+        "caption",
+        captionBox ? captionBox.value : ""
+    );
 
-    if (image.files[0]) {
-        fd.append("image", image.files[0]);
+    fd.append(
+        "principal_id",
+        principalBox ? principalBox.value : ""
+    );
+
+    if (image && image.files && image.files[0]) {
+        fd.append(
+            "image",
+            image.files[0]
+        );
     }
 
-    const r = await fetch("/api/scan", {
-        method: "POST",
-        headers: {
-            "X-CSRFToken": window.POSTGUARD_CSRF
-        },
-        body: fd
-    });
+    try {
+        const r = await fetch("/api/scan", {
+            method: "POST",
+            headers: {
+                "X-CSRFToken":
+                    window.POSTGUARD_CSRF
+            },
+            body: fd
+        });
 
-    const d = await r.json();
+        const d = await r.json();
 
-    if (!r.ok) {
-        return alert(d.error || "Scan failed.");
+        if (!r.ok) {
+            return alert(
+                d.error || "Scan failed."
+            );
+        }
+
+        if (scoreBox) {
+            scoreBox.textContent = d.score;
+        }
+
+        if (riskBox) {
+            riskBox.textContent =
+                d.risk + " RISK";
+        }
+
+        if (summaryBox) {
+            summaryBox.textContent =
+                d.risk === "LOW"
+                    ? "No major signals detected."
+                    : "Review every finding before publication.";
+        }
+
+        if (findingsBox) {
+            findingsBox.innerHTML =
+                (d.findings || []).map(f => `
+                    <div class="finding">
+                        <b>
+                            ${escapeHtml(f.severity)}
+                            ·
+                            ${escapeHtml(f.category)}
+                        </b>
+
+                        <span class="muted">
+                            ${escapeHtml(f.detail)}
+                        </span>
+
+                        <div class="recommend">
+                            <b>Recommended action</b>
+                            ${escapeHtml(f.recommendation)}
+                        </div>
+                    </div>
+                `).join("");
+        }
+
+        // Keep result visible for 10 seconds.
+        setTimeout(() => {
+            location.reload();
+        }, 10000);
+
+    } catch (error) {
+        console.error(error);
+
+        alert(
+            "PostGuard could not complete the scan."
+        );
     }
-
-    score.textContent = d.score;
-    risk.textContent = d.risk + " RISK";
-
-    summary.textContent =
-        d.risk === "LOW"
-            ? "No major signals detected."
-            : "Review every finding before publication.";
-
-    findings.innerHTML = d.findings.map(f => `
-        <div class="finding">
-            <b>${f.severity} · ${f.category}</b>
-
-            <span class="muted">
-                ${f.detail}
-            </span>
-
-            <div class="recommend">
-                <b>Recommended action</b>
-                ${f.recommendation}
-            </div>
-        </div>
-    `).join("");
-
-    // Keep the completed result visible for 10 seconds.
-    setTimeout(() => {
-        location.reload();
-    }, 10000);
 }
 
 
@@ -121,19 +195,30 @@ async function scan() {
 // ============================================================
 
 function openAlert(button) {
+    if (!button) {
+        return;
+    }
+
     currentAlertId = button.dataset.id;
 
-    const setText = (id, value, fallback = "Not recorded") => {
-        const element = document.getElementById(id);
+    const setText = (
+        id,
+        value,
+        fallback = "Not recorded"
+    ) => {
+        const element =
+            document.getElementById(id);
 
-        if (element) {
-            element.textContent =
-                value !== undefined &&
-                value !== null &&
-                value !== ""
-                    ? value
-                    : fallback;
+        if (!element) {
+            return;
         }
+
+        element.textContent =
+            value !== undefined &&
+            value !== null &&
+            value !== ""
+                ? value
+                : fallback;
     };
 
     setText(
@@ -191,7 +276,9 @@ function openAlert(button) {
     );
 
     const scoreElement =
-        document.getElementById("alertScore");
+        document.getElementById(
+            "alertScore"
+        );
 
     if (scoreElement) {
         scoreElement.textContent =
@@ -201,7 +288,9 @@ function openAlert(button) {
     }
 
     const closeButton =
-        document.getElementById("alertCloseButton");
+        document.getElementById(
+            "alertCloseButton"
+        );
 
     if (closeButton) {
         closeButton.style.display =
@@ -211,23 +300,35 @@ function openAlert(button) {
     }
 
     const caseButton =
-        document.getElementById("alertCaseButton");
+        document.getElementById(
+            "alertCaseButton"
+        );
 
     if (caseButton) {
         if (button.dataset.status === "Open") {
-            caseButton.style.display = "inline-block";
+            caseButton.style.display =
+                "inline-block";
+
             caseButton.disabled = false;
-            caseButton.textContent = "Create Case";
+
+            caseButton.textContent =
+                "Create Case";
         } else {
-            caseButton.style.display = "none";
+            caseButton.style.display =
+                "none";
         }
     }
 
     const modal =
-        document.getElementById("alertModal");
+        document.getElementById(
+            "alertModal"
+        );
 
     if (!modal) {
-        alert("Alert window is missing from app.html.");
+        alert(
+            "Alert window is missing from app.html."
+        );
+
         return;
     }
 
@@ -235,11 +336,17 @@ function openAlert(button) {
 }
 
 
+// ============================================================
+// CLOSE ALERT WINDOW
+// ============================================================
+
 function closeAlertModal() {
     currentAlertId = null;
 
     const modal =
-        document.getElementById("alertModal");
+        document.getElementById(
+            "alertModal"
+        );
 
     if (modal) {
         modal.style.display = "none";
@@ -256,26 +363,42 @@ async function closeCurrentAlert() {
         return;
     }
 
-    await closeAlert(currentAlertId);
+    await closeAlert(
+        currentAlertId
+    );
 }
 
 
 async function closeAlert(id) {
-    const r = await fetch(
-        "/api/alerts/" + id + "/close",
-        {
-            method: "POST",
-            headers: {
-                "X-CSRFToken": window.POSTGUARD_CSRF
+    try {
+        const r = await fetch(
+            "/api/alerts/" +
+                id +
+                "/close",
+            {
+                method: "POST",
+                headers: {
+                    "X-CSRFToken":
+                        window.POSTGUARD_CSRF
+                }
             }
+        );
+
+        if (!r.ok) {
+            return alert(
+                "Could not close alert."
+            );
         }
-    );
 
-    if (!r.ok) {
-        return alert("Could not close alert.");
+        location.reload();
+
+    } catch (error) {
+        console.error(error);
+
+        alert(
+            "Could not close alert."
+        );
     }
-
-    location.reload();
 }
 
 
@@ -289,35 +412,73 @@ async function createCaseFromAlert() {
     }
 
     const button =
-        document.getElementById("alertCaseButton");
-
-    button.disabled = true;
-    button.textContent = "Creating case...";
-
-    const r = await fetch(
-        "/api/alerts/" + currentAlertId + "/case",
-        {
-            method: "POST",
-            headers: {
-                "X-CSRFToken": window.POSTGUARD_CSRF
-            }
-        }
-    );
-
-    const d = await r.json();
-
-    if (!r.ok) {
-        button.disabled = false;
-        button.textContent = "Create Case";
-
-        return alert(
-            d.error || "Could not create case."
+        document.getElementById(
+            "alertCaseButton"
         );
+
+    if (button) {
+        button.disabled = true;
+
+        button.textContent =
+            "Creating case...";
     }
 
-    alert("Case created successfully.");
+    try {
+        const r = await fetch(
+            "/api/alerts/" +
+                currentAlertId +
+                "/case",
+            {
+                method: "POST",
+                headers: {
+                    "X-CSRFToken":
+                        window.POSTGUARD_CSRF
+                }
+            }
+        );
 
-    location.reload();
+        let d = {};
+
+        try {
+            d = await r.json();
+        } catch (error) {
+            console.error(error);
+        }
+
+        if (!r.ok) {
+            if (button) {
+                button.disabled = false;
+
+                button.textContent =
+                    "Create Case";
+            }
+
+            return alert(
+                d.error ||
+                "Could not create case."
+            );
+        }
+
+        alert(
+            "Case created successfully."
+        );
+
+        location.reload();
+
+    } catch (error) {
+        console.error(error);
+
+        if (button) {
+            button.disabled = false;
+
+            button.textContent =
+                "Create Case";
+        }
+
+        alert(
+            "Could not create case."
+        );
+    }
 }
 
 
@@ -326,39 +487,79 @@ async function createCaseFromAlert() {
 // ============================================================
 
 async function newCase() {
-    const title = prompt("Case title");
+    const title =
+        prompt("Case title");
 
     if (!title) {
         return;
     }
 
-    await fetch("/api/cases", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            "X-CSRFToken": window.POSTGUARD_CSRF
-        },
-        body: JSON.stringify({
-            title
-        })
-    });
+    try {
+        const r = await fetch(
+            "/api/cases",
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type":
+                        "application/json",
 
-    location.reload();
+                    "X-CSRFToken":
+                        window.POSTGUARD_CSRF
+                },
+                body: JSON.stringify({
+                    title
+                })
+            }
+        );
+
+        if (!r.ok) {
+            return alert(
+                "Could not create case."
+            );
+        }
+
+        location.reload();
+
+    } catch (error) {
+        console.error(error);
+
+        alert(
+            "Could not create case."
+        );
+    }
 }
 
 
 async function closeCase(id) {
-    await fetch(
-        "/api/cases/" + id + "/close",
-        {
-            method: "POST",
-            headers: {
-                "X-CSRFToken": window.POSTGUARD_CSRF
+    try {
+        const r = await fetch(
+            "/api/cases/" +
+                id +
+                "/close",
+            {
+                method: "POST",
+                headers: {
+                    "X-CSRFToken":
+                        window.POSTGUARD_CSRF
+                }
             }
-        }
-    );
+        );
 
-    location.reload();
+        if (!r.ok) {
+            return alert(
+                "Could not close case."
+            );
+        }
+
+        location.reload();
+
+    } catch (error) {
+        console.error(error);
+
+        alert(
+            "Could not close case."
+        );
+    }
 }
 
 
@@ -367,29 +568,53 @@ async function closeCase(id) {
 // ============================================================
 
 async function addPrincipal() {
-    const name = prompt("Principal name");
+    const name =
+        prompt("Principal name");
 
     if (!name) {
         return;
     }
 
     const role =
-        prompt("Role", "Executive") ||
-        "Executive";
+        prompt(
+            "Role",
+            "Executive"
+        ) || "Executive";
 
-    await fetch("/api/principals", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            "X-CSRFToken": window.POSTGUARD_CSRF
-        },
-        body: JSON.stringify({
-            name,
-            role
-        })
-    });
+    try {
+        const r = await fetch(
+            "/api/principals",
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type":
+                        "application/json",
 
-    location.reload();
+                    "X-CSRFToken":
+                        window.POSTGUARD_CSRF
+                },
+                body: JSON.stringify({
+                    name,
+                    role
+                })
+            }
+        );
+
+        if (!r.ok) {
+            return alert(
+                "Could not add principal."
+            );
+        }
+
+        location.reload();
+
+    } catch (error) {
+        console.error(error);
+
+        alert(
+            "Could not add principal."
+        );
+    }
 }
 
 
@@ -398,7 +623,8 @@ async function addPrincipal() {
 // ============================================================
 
 async function addSource() {
-    const name = prompt("Source name");
+    const name =
+        prompt("Source name");
 
     if (!name) {
         return;
@@ -411,19 +637,40 @@ async function addSource() {
         ) ||
         "Authorised source";
 
-    await fetch("/api/sources", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            "X-CSRFToken": window.POSTGUARD_CSRF
-        },
-        body: JSON.stringify({
-            name,
-            kind
-        })
-    });
+    try {
+        const r = await fetch(
+            "/api/sources",
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type":
+                        "application/json",
 
-    location.reload();
+                    "X-CSRFToken":
+                        window.POSTGUARD_CSRF
+                },
+                body: JSON.stringify({
+                    name,
+                    kind
+                })
+            }
+        );
+
+        if (!r.ok) {
+            return alert(
+                "Could not add source."
+            );
+        }
+
+        location.reload();
+
+    } catch (error) {
+        console.error(error);
+
+        alert(
+            "Could not add source."
+        );
+    }
 }
 
 
@@ -432,13 +679,193 @@ async function addSource() {
 // ============================================================
 
 async function loadAudit() {
-    const r = await fetch("/api/audit");
-    const d = await r.json();
+    const auditBox =
+        document.getElementById(
+            "auditBox"
+        );
 
-    auditBox.textContent =
-        d.map(x =>
-            `${x.created_at} | ${x.email} | ${x.action} | ${x.detail}`
-        ).join("\n") || "No events.";
+    if (!auditBox) {
+        return;
+    }
+
+    try {
+        const r =
+            await fetch("/api/audit");
+
+        const d =
+            await r.json();
+
+        if (!r.ok) {
+            auditBox.textContent =
+                "Could not load audit log.";
+
+            return;
+        }
+
+        auditBox.textContent =
+            d.map(x =>
+                `${x.created_at} | ${x.email} | ${x.action} | ${x.detail}`
+            ).join("\n") ||
+            "No events.";
+
+    } catch (error) {
+        console.error(error);
+
+        auditBox.textContent =
+            "Could not load audit log.";
+    }
+}
+
+
+// ============================================================
+// PRINCIPAL SECURE PUBLISH CENTRE
+// ============================================================
+
+async function publishPrincipalPost(
+    principalId
+) {
+    const platform =
+        document.getElementById(
+            "publishPlatform"
+        );
+
+    const captionBox =
+        document.getElementById(
+            "publishCaption"
+        );
+
+    const imageBox =
+        document.getElementById(
+            "publishImage"
+        );
+
+    const result =
+        document.getElementById(
+            "publishResult"
+        );
+
+    if (
+        !platform ||
+        !captionBox ||
+        !imageBox ||
+        !result
+    ) {
+        alert(
+            "Publish Centre is not configured correctly."
+        );
+
+        return;
+    }
+
+    const fd =
+        new FormData();
+
+    fd.append(
+        "platform",
+        platform.value
+    );
+
+    fd.append(
+        "caption",
+        captionBox.value
+    );
+
+    if (
+        imageBox.files &&
+        imageBox.files[0]
+    ) {
+        fd.append(
+            "image",
+            imageBox.files[0]
+        );
+    }
+
+    result.style.display =
+        "block";
+
+    result.textContent =
+        "Running PostGuard security check...";
+
+    try {
+        const r = await fetch(
+            `/api/principals/${principalId}/publish`,
+            {
+                method: "POST",
+                headers: {
+                    "X-CSRFToken":
+                        window.POSTGUARD_CSRF
+                },
+                body: fd
+            }
+        );
+
+        let d = {};
+
+        try {
+            d = await r.json();
+        } catch (error) {
+            console.error(error);
+        }
+
+        if (d.blocked) {
+            result.textContent =
+                `Publishing blocked · ` +
+                `${d.risk} · ` +
+                `${d.score}/100 · ` +
+                `${d.error}`;
+
+            return;
+        }
+
+        if (d.connection_required) {
+            result.textContent =
+                `Security check passed · ` +
+                `${d.risk} · ` +
+                `${d.score}/100 · ` +
+                `${d.message}`;
+
+            return;
+        }
+
+        if (!r.ok) {
+            result.textContent =
+                d.error ||
+                "Could not process the post.";
+
+            return;
+        }
+
+        result.textContent =
+            d.message ||
+            "Post processed.";
+
+    } catch (error) {
+        console.error(error);
+
+        result.textContent =
+            "Publishing request failed.";
+    }
+}
+
+
+// ============================================================
+// HTML ESCAPING
+// ============================================================
+
+function escapeHtml(value) {
+    if (
+        value === undefined ||
+        value === null
+    ) {
+        return "";
+    }
+
+    return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
 }
 
 
@@ -446,8 +873,11 @@ async function loadAudit() {
 // KEYBOARD CONTROLS
 // ============================================================
 
-document.addEventListener("keydown", event => {
-    if (event.key === "Escape") {
-        closeAlertModal();
+document.addEventListener(
+    "keydown",
+    event => {
+        if (event.key === "Escape") {
+            closeAlertModal();
+        }
     }
-});
+);
