@@ -876,15 +876,18 @@ def scan():
                 score + image_points,
             )
 
-        risk_level = risk(score)
-
-        # A critical protective-security finding must never be
-        # downgraded simply because the numeric score is below 80.
-        if any(
-            finding.get("severity") == "CRITICAL"
+        # Keep the numeric score aligned with the most serious finding.
+        severities = {
+            finding.get("severity")
             for finding in findings
-        ):
-            risk_level = "CRITICAL"
+        }
+
+        if "CRITICAL" in severities:
+            score = max(score, 80)
+        elif "HIGH" in severities:
+            score = max(score, 60)
+
+        risk_level = risk(score)
 
         c = db()
 
