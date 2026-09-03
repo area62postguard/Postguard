@@ -1029,20 +1029,46 @@ def login():
             (email,),
         ).fetchone()
 
-        c.close()
-
         if user and check_password_hash(
             user["password"],
             password,
         ):
+            configured_admin_email = os.getenv(
+                "POSTGUARD_ADMIN_EMAIL",
+                "",
+            ).strip().lower()
+
+            role = user["role"] or "user"
+
+            # The server-side configured admin email is authoritative.
+            # This repairs an account whose database role was accidentally
+            # left as "user" while keeping all other accounts unchanged.
+            if configured_admin_email and email == configured_admin_email:
+                role = "admin"
+
+                if user["role"] != "admin":
+                    c.execute(
+                        """
+                        UPDATE users
+                        SET role='admin'
+                        WHERE id=?
+                        """,
+                        (user["id"],),
+                    )
+                    c.commit()
+
+            c.close()
+
             session.clear()
             session.permanent = True
 
             session["uid"] = user["id"]
             session["email"] = email
-            session["role"] = user["role"] or "user"
+            session["role"] = role
 
             return redirect(url_for("home"))
+
+        c.close()
 
         flash("Invalid credentials.")
 
@@ -2102,7 +2128,10 @@ ADMIN_USERS_PAGE = """
 <header>
     <div>
         <h1>PostGuard Admin · Registered Users</h1>
-        <div class="muted">Signed in as {{ session.get("email") }}</div>
+        <div class="muted">
+            Signed in as {{ session.get("email") }}
+            {% if session.get("role") == "admin" %} · ADMIN{% endif %}
+        </div>
     </div>
     <div class="actions">
         <a class="button" href="{{ url_for('home') }}">Dashboard</a>
@@ -2249,7 +2278,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="4.4",
+        version="4.5",
     )
 
 
