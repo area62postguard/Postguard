@@ -816,161 +816,165 @@ def scan():
     uploaded_file = request.files.get("image")
 
     filename = None
+    path = None
     metadata = {}
 
-    if uploaded_file and uploaded_file.filename:
-        extension = os.path.splitext(
-            uploaded_file.filename
-        )[1].lower()
+    try:
+        if uploaded_file and uploaded_file.filename:
+            extension = os.path.splitext(
+                uploaded_file.filename
+            )[1].lower()
 
-        if extension not in [
-            ".jpg",
-            ".jpeg",
-            ".png",
-            ".webp",
-        ]:
-            return jsonify(
-                error="Unsupported image type"
-            ), 400
+            if extension not in [
+                ".jpg",
+                ".jpeg",
+                ".png",
+                ".webp",
+            ]:
+                return jsonify(
+                    error="Unsupported image type"
+                ), 400
 
-        filename = (
-            secrets.token_hex(16)
-            + extension
-        )
+            filename = (
+                secrets.token_hex(16)
+                + extension
+            )
 
-        path = os.path.join(
-            UP,
-            filename,
-        )
+            path = os.path.join(
+                UP,
+                filename,
+            )
 
-        uploaded_file.save(path)
+            uploaded_file.save(path)
+
+            try:
+                with Image.open(path) as img:
+                    img.verify()
+            except Exception:
+                return jsonify(
+                    error="Uploaded file is not a valid image."
+                ), 400
+
+            image_findings, metadata = image_scan(
+                path
+            )
+
+            findings += image_findings
+
+            image_points = sum(
+                20
+                if finding["severity"]
+                in ("HIGH", "CRITICAL")
+                else 5
+                for finding in image_findings
+                if finding["category"]
+                != "Image metadata"
+            )
+
+            score = min(
+                99,
+                score + image_points,
+            )
+
+        risk_level = risk(score)
+
+        c = db()
 
         try:
-            with Image.open(path) as img:
-                img.verify()
-        except Exception:
-            if os.path.exists(path):
-                os.remove(path)
-
-            return jsonify(
-                error="Uploaded file is not a valid image."
-            ), 400
-
-        image_findings, metadata = image_scan(
-            path
-        )
-
-        findings += image_findings
-
-        image_points = sum(
-            20
-            if finding["severity"]
-            in ("HIGH", "CRITICAL")
-            else 5
-            for finding in image_findings
-            if finding["category"]
-            != "Image metadata"
-        )
-
-        score = min(
-            99,
-            score + image_points,
-        )
-
-    risk_level = risk(score)
-
-    c = db()
-
-    c.execute(
-        """
-        INSERT INTO checks(
-            principal_id,
-            filename,
-            score,
-            risk,
-            findings,
-            created_at
-        )
-        VALUES(?,?,?,?,?,?)
-        """,
-        (
-            principal_id,
-            filename,
-            score,
-            risk_level,
-            json.dumps(findings),
-            now(),
-        ),
-    )
-
-    if principal_id:
-        c.execute(
-            """
-            UPDATE principals
-            SET risk=?
-            WHERE id=?
-            """,
-            (
-                score,
-                principal_id,
-            ),
-        )
-
-    if risk_level in ("HIGH", "CRITICAL"):
-        top_finding = findings[0] if findings else {
-            "category": "High-risk post",
-            "detail": "The post exceeded the configured PostGuard risk threshold.",
-            "recommendation": "Review and remove sensitive details before publishing.",
-        }
-
-        c.execute(
-            """
-            INSERT INTO alerts(
-                principal_id,
-                severity,
-                category,
-                detail,
-                recommendation,
-                created_at
+            c.execute(
+                """
+                INSERT INTO checks(
+                    principal_id,
+                    filename,
+                    score,
+                    risk,
+                    findings,
+                    created_at
+                )
+                VALUES(?,?,?,?,?,?)
+                """,
+                (
+                    principal_id,
+                    filename,
+                    score,
+                    risk_level,
+                    json.dumps(findings),
+                    now(),
+                ),
             )
-            VALUES(?,?,?,?,?,?)
-            """,
-            (
-                principal_id,
-                risk_level,
-                top_finding.get("category", "High-risk post"),
-                top_finding.get(
-                    "detail",
-                    "The post exceeded the configured PostGuard risk threshold.",
-                ),
-                top_finding.get(
-                    "recommendation",
-                    "Review and remove sensitive details before publishing.",
-                ),
-                now(),
-            ),
+
+            if principal_id:
+                c.execute(
+                    """
+                    UPDATE principals
+                    SET risk=?
+                    WHERE id=?
+                    """,
+                    (
+                        score,
+                        principal_id,
+                    ),
+                )
+
+            if risk_level in ("HIGH", "CRITICAL"):
+                top_finding = findings[0] if findings else {
+                    "category": "High-risk post",
+                    "detail": "The post exceeded the configured PostGuard risk threshold.",
+                    "recommendation": "Review and remove sensitive details before publishing.",
+                }
+
+                c.execute(
+                    """
+                    INSERT INTO alerts(
+                        principal_id,
+                        severity,
+                        category,
+                        detail,
+                        recommendation,
+                        created_at
+                    )
+                    VALUES(?,?,?,?,?,?)
+                    """,
+                    (
+                        principal_id,
+                        risk_level,
+                        top_finding.get("category", "High-risk post"),
+                        top_finding.get(
+                            "detail",
+                            "The post exceeded the configured PostGuard risk threshold.",
+                        ),
+                        top_finding.get(
+                            "recommendation",
+                            "Review and remove sensitive details before publishing.",
+                        ),
+                        now(),
+                    ),
+                )
+
+            c.commit()
+        finally:
+            c.close()
+
+        audit(
+            "security_scan",
+            f"{risk_level} {score}",
         )
 
-    c.commit()
-    c.close()
+        return jsonify(
+            score=score,
+            risk=risk_level,
+            findings=findings,
+            metadata=metadata,
+        )
 
-    audit(
-        "security_scan",
-        f"{risk_level} {score}",
-    )
-
-    if filename:
-        saved_path = os.path.join(UP, filename)
-
-        if os.path.exists(saved_path):
-            os.remove(saved_path)
-
-    return jsonify(
-        score=score,
-        risk=risk_level,
-        findings=findings,
-        metadata=metadata,
-    )
+    finally:
+        if path and os.path.exists(path):
+            try:
+                os.remove(path)
+            except OSError:
+                app.logger.exception(
+                    "Failed to delete temporary scan image."
+                )
 
 
 # ============================================================
