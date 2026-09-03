@@ -248,6 +248,8 @@ def init():
             )
 
     ensure_column("checks", "caption", "TEXT")
+    ensure_column("checks", "safer_caption", "TEXT")
+    ensure_column("checks", "safer_check_id", "INTEGER")
     ensure_column("alerts", "check_id", "INTEGER")
     ensure_column("alerts", "risk_score", "INTEGER")
     ensure_column("alerts", "caption", "TEXT")
@@ -1684,6 +1686,8 @@ textarea.field{min-height:180px;resize:vertical}
         <section class="card">
             <form id="scanForm">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" id="original_check_id" name="original_check_id" value="">
+                <input type="hidden" id="safer_caption_field" name="safer_caption" value="">
 
                 <label for="principal_id">Profile</label>
                 <select id="principal_id" name="principal_id" class="field">
@@ -1749,6 +1753,9 @@ const generateSafer = document.getElementById("generateSafer");
 const rescanSafer = document.getElementById("rescanSafer");
 const copySafer = document.getElementById("copySafer");
 const button = document.getElementById("scanButton");
+const originalCheckField = document.getElementById("original_check_id");
+const saferCaptionField = document.getElementById("safer_caption_field");
+let lastCheckId = null;
 
 imageInput.addEventListener("change", () => {
     const file = imageInput.files && imageInput.files[0];
@@ -1785,6 +1792,12 @@ form.addEventListener("submit", async (event) => {
         if (!response.ok) {
             throw new Error(data.error || "The scan could not be completed.");
         }
+
+        if (data.check_id) {
+            lastCheckId = data.check_id;
+        }
+        originalCheckField.value = "";
+        saferCaptionField.value = "";
 
         scoreEl.textContent = (data.score ?? 0) + "/100";
         riskEl.textContent = data.risk || "UNKNOWN";
@@ -1898,6 +1911,13 @@ rescanSafer.addEventListener("click", () => {
         return;
     }
 
+    if (!lastCheckId) {
+        saferCaptionEl.textContent = "Run the original post through PostGuard first.";
+        return;
+    }
+
+    originalCheckField.value = String(lastCheckId);
+    saferCaptionField.value = safer;
     document.getElementById("caption").value = safer;
     form.requestSubmit();
 });
@@ -2011,6 +2031,31 @@ a{color:inherit}.main{max-width:1000px;margin:auto;padding:30px 20px}
     <div class="caption">{{ check['caption'] or 'No caption was supplied.' }}</div>
 </section>
 
+{% if check['safer_caption'] %}
+<section class="card">
+    <h2>Safer caption</h2>
+    <div class="caption">{{ check['safer_caption'] }}</div>
+
+    {% if safer_check %}
+    <div class="finding" style="margin-top:16px">
+        <strong>Final re-scan result</strong>
+        <div style="margin-top:8px">
+            Score: <b>{{ safer_check['score'] }}/100</b>
+            · Risk: <b>{{ safer_check['risk'] }}</b>
+        </div>
+        {% if safer_check['risk'] in ('HIGH','CRITICAL') %}
+            <div class="danger" style="margin-top:8px;font-weight:800">🔴 DO NOT POST</div>
+        {% elif safer_check['risk'] == 'MODERATE' %}
+            <div class="warn" style="margin-top:8px;font-weight:800">🟠 REVIEW BEFORE POSTING</div>
+        {% else %}
+            <div class="safe" style="margin-top:8px;font-weight:800">🟢 SAFE TO POST</div>
+        {% endif %}
+        <div class="muted" style="margin-top:8px">Re-scanned {{ safer_check['created_at'] }}</div>
+    </div>
+    {% endif %}
+</section>
+{% endif %}
+
 <section class="card">
     <h2>Findings</h2>
     {% if findings %}
@@ -2053,6 +2098,19 @@ def scan_history_detail(check_id):
                 "SELECT * FROM checks WHERE id=? AND user_id=?",
                 (check_id, session["uid"]),
             ).fetchone()
+
+        safer_check = None
+        if check and check["safer_check_id"]:
+            if session.get("role") == "admin":
+                safer_check = c.execute(
+                    "SELECT * FROM checks WHERE id=?",
+                    (check["safer_check_id"],),
+                ).fetchone()
+            else:
+                safer_check = c.execute(
+                    "SELECT * FROM checks WHERE id=? AND user_id=?",
+                    (check["safer_check_id"], session["uid"]),
+                ).fetchone()
     finally:
         c.close()
 
@@ -2070,6 +2128,7 @@ def scan_history_detail(check_id):
         SCAN_HISTORY_DETAIL_PAGE,
         check=check,
         findings=findings,
+        safer_check=safer_check,
     )
 
 
@@ -2133,6 +2192,23 @@ def scan():
         "caption",
         "",
     )
+
+    original_check_id_raw = request.form.get(
+        "original_check_id",
+        "",
+    ).strip()
+
+    safer_caption = request.form.get(
+        "safer_caption",
+        "",
+    ).strip()
+
+    original_check_id = None
+    if original_check_id_raw:
+        try:
+            original_check_id = int(original_check_id_raw)
+        except ValueError:
+            return jsonify(error="Invalid original scan reference."), 400
 
     score, findings = caption_scan(caption)
 
@@ -2244,6 +2320,43 @@ def scan():
 
             check_id = check_row["id"]
 
+            if original_check_id and safer_caption:
+                if session.get("role") == "admin":
+                    original_row = c.execute(
+                        "SELECT id FROM checks WHERE id=?",
+                        (original_check_id,),
+                    ).fetchone()
+                else:
+                    original_row = c.execute(
+                        "SELECT id FROM checks WHERE id=? AND user_id=?",
+                        (original_check_id, session["uid"]),
+                    ).fetchone()
+
+                if original_row:
+                    if session.get("role") == "admin":
+                        c.execute(
+                            """
+                            UPDATE checks
+                            SET safer_caption=?, safer_check_id=?
+                            WHERE id=?
+                            """,
+                            (safer_caption, check_id, original_check_id),
+                        )
+                    else:
+                        c.execute(
+                            """
+                            UPDATE checks
+                            SET safer_caption=?, safer_check_id=?
+                            WHERE id=? AND user_id=?
+                            """,
+                            (
+                                safer_caption,
+                                check_id,
+                                original_check_id,
+                                session["uid"],
+                            ),
+                        )
+
             if principal_id:
                 c.execute(
                     """
@@ -2326,6 +2439,7 @@ def scan():
         )
 
         return jsonify(
+            check_id=check_id,
             score=score,
             risk=risk_level,
             findings=findings,
@@ -3292,7 +3406,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="5.4",
+        version="5.5",
     )
 
 
