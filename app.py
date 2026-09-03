@@ -1951,6 +1951,128 @@ def check_post():
     )
 
 
+
+SCAN_HISTORY_DETAIL_PAGE = """
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PostGuard · Scan Result</title>
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#09101d;color:#f5f7fb}
+a{color:inherit}.main{max-width:1000px;margin:auto;padding:30px 20px}
+.top{display:flex;justify-content:space-between;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:22px}
+.card{background:#111a2b;border:1px solid #22304a;border-radius:16px;padding:20px;margin-bottom:16px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.metric{background:#0d1525;border:1px solid #2c3a55;border-radius:12px;padding:16px}
+.metric .value{font-size:1.55rem;font-weight:800;margin-top:5px}
+.muted{color:#95a4ba}.finding{background:#0d1525;border:1px solid #2c3a55;border-radius:12px;padding:14px;margin-top:10px}
+.btn{display:inline-block;padding:10px 14px;border-radius:10px;border:1px solid #31415e;background:#151f33;color:#fff;text-decoration:none;font-weight:700}
+.decision{font-size:1.35rem;font-weight:850}
+.safe{color:#7dd3a7}.warn{color:#f6c56f}.danger{color:#ff8c8c}
+.caption{white-space:pre-wrap;overflow-wrap:anywhere}
+@media(max-width:700px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main class="main">
+<div class="top">
+    <div>
+        <div class="muted">PostGuard scan history</div>
+        <h1 style="margin:.2rem 0">Scan #{{ check['id'] }}</h1>
+    </div>
+    <a class="btn" href="{{ url_for('home') }}">Back to Dashboard</a>
+</div>
+
+<div class="grid">
+    <div class="metric"><div class="muted">Risk score</div><div class="value">{{ check['score'] }}/100</div></div>
+    <div class="metric"><div class="muted">Risk level</div><div class="value">{{ check['risk'] }}</div></div>
+    <div class="metric"><div class="muted">Checked</div><div class="value" style="font-size:1rem">{{ check['created_at'] }}</div></div>
+</div>
+
+<section class="card" style="margin-top:16px">
+    {% if check['risk'] in ('HIGH','CRITICAL') %}
+        <div class="decision danger">🔴 DO NOT POST</div>
+        <p class="muted">This post contained high-risk information when it was checked.</p>
+    {% elif check['risk'] == 'MODERATE' %}
+        <div class="decision warn">🟠 REVIEW BEFORE POSTING</div>
+        <p class="muted">Review the findings before publishing.</p>
+    {% else %}
+        <div class="decision safe">🟢 SAFE TO POST</div>
+        <p class="muted">No major exposure was detected by the current PostGuard checks.</p>
+    {% endif %}
+</section>
+
+<section class="card">
+    <h2>Original caption</h2>
+    <div class="caption">{{ check['caption'] or 'No caption was supplied.' }}</div>
+</section>
+
+<section class="card">
+    <h2>Findings</h2>
+    {% if findings %}
+        {% for f in findings %}
+        <div class="finding">
+            <strong>{{ f.get('category') or f.get('title') or 'Security finding' }}</strong>
+            <div style="margin-top:6px">{{ f.get('detail','') }}</div>
+            {% if f.get('recommendation') %}
+            <div class="muted" style="margin-top:8px"><b>Recommended action:</b> {{ f.get('recommendation') }}</div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    {% else %}
+        <div class="finding">No specific risk findings were recorded.</div>
+    {% endif %}
+</section>
+
+<div style="display:flex;gap:10px;flex-wrap:wrap">
+    <a class="btn" href="{{ url_for('check_post') }}">Check another post</a>
+    <a class="btn" href="{{ url_for('home') }}">Dashboard</a>
+</div>
+</main>
+</body>
+</html>
+"""
+
+
+@app.get("/scan-history/<int:check_id>")
+@auth
+def scan_history_detail(check_id):
+    c = db()
+    try:
+        if session.get("role") == "admin":
+            check = c.execute(
+                "SELECT * FROM checks WHERE id=?",
+                (check_id,),
+            ).fetchone()
+        else:
+            check = c.execute(
+                "SELECT * FROM checks WHERE id=? AND user_id=?",
+                (check_id, session["uid"]),
+            ).fetchone()
+    finally:
+        c.close()
+
+    if not check:
+        abort(404)
+
+    try:
+        findings = json.loads(check["findings"] or "[]")
+        if not isinstance(findings, list):
+            findings = []
+    except (TypeError, ValueError, json.JSONDecodeError):
+        findings = []
+
+    return render_template_string(
+        SCAN_HISTORY_DETAIL_PAGE,
+        check=check,
+        findings=findings,
+    )
+
+
 # ============================================================
 # POST / IMAGE SCANNER
 # ============================================================
@@ -3170,7 +3292,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="5.3",
+        version="5.4",
     )
 
 
