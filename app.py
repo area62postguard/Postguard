@@ -20,6 +20,7 @@ from flask import (
     session,
     jsonify,
     flash,
+    abort,
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from PIL import Image, ExifTags
@@ -249,6 +250,43 @@ def init():
     ensure_column("alerts", "risk_score", "INTEGER")
     ensure_column("alerts", "caption", "TEXT")
 
+    # Multi-user ownership. Existing records are assigned to the
+    # existing administrator so customer accounts never inherit them.
+    ensure_column("principals", "user_id", "INTEGER")
+    ensure_column("checks", "user_id", "INTEGER")
+    ensure_column("alerts", "user_id", "INTEGER")
+    ensure_column("cases", "user_id", "INTEGER")
+
+    admin_row = c.execute(
+        """
+        SELECT id
+        FROM users
+        WHERE role='admin'
+        ORDER BY id
+        LIMIT 1
+        """
+    ).fetchone()
+
+    if admin_row:
+        admin_id = admin_row["id"]
+
+        c.execute(
+            "UPDATE principals SET user_id=? WHERE user_id IS NULL",
+            (admin_id,),
+        )
+        c.execute(
+            "UPDATE checks SET user_id=? WHERE user_id IS NULL",
+            (admin_id,),
+        )
+        c.execute(
+            "UPDATE alerts SET user_id=? WHERE user_id IS NULL",
+            (admin_id,),
+        )
+        c.execute(
+            "UPDATE cases SET user_id=? WHERE user_id IS NULL",
+            (admin_id,),
+        )
+
     if not c.execute(
         "SELECT 1 FROM principals LIMIT 1"
     ).fetchone():
@@ -317,7 +355,7 @@ def init():
 
 
 # ============================================================
-# AUTHENTICATION
+# AUTHENTICATION / AUTHORISATION
 # ============================================================
 
 def auth(f):
@@ -325,6 +363,20 @@ def auth(f):
     def wrapped(*args, **kwargs):
         if "uid" not in session:
             return redirect(url_for("login"))
+
+        return f(*args, **kwargs)
+
+    return wrapped
+
+
+def admin_required(f):
+    @wraps(f)
+    def wrapped(*args, **kwargs):
+        if "uid" not in session:
+            return redirect(url_for("login"))
+
+        if session.get("role") != "admin":
+            abort(403)
 
         return f(*args, **kwargs)
 
@@ -683,6 +735,31 @@ def register():
         ).fetchone()
 
         user_id = user["id"]
+
+        # Give every customer a private principal/profile immediately.
+        profile_name = email.split("@", 1)[0].replace(".", " ").replace("_", " ")
+        profile_name = profile_name.strip().title() or "My Profile"
+
+        c.execute(
+            """
+            INSERT INTO principals(
+                user_id,
+                name,
+                role,
+                risk,
+                created_at
+            )
+            VALUES(?,?,?,?,?)
+            """,
+            (
+                user_id,
+                profile_name,
+                "Account holder",
+                0,
+                now(),
+            ),
+        )
+
         c.commit()
         c.close()
 
@@ -736,6 +813,7 @@ def login():
 
             session["uid"] = user["id"]
             session["email"] = email
+            session["role"] = user["role"] or "user"
 
             return redirect(url_for("home"))
 
@@ -760,41 +838,91 @@ def logout():
 def home():
     c = db()
 
-    principals = c.execute(
-        """
-        SELECT *
-        FROM principals
-        ORDER BY risk DESC
-        """
-    ).fetchall()
+    is_admin = session.get("role") == "admin"
+    uid = session["uid"]
 
-    alerts = c.execute(
-        """
-        SELECT
-            a.*,
-            p.name AS principal
-        FROM alerts a
-        LEFT JOIN principals p
-            ON p.id = a.principal_id
-        ORDER BY a.id DESC
-        """
-    ).fetchall()
+    if is_admin:
+        principals = c.execute(
+            """
+            SELECT *
+            FROM principals
+            ORDER BY risk DESC
+            """
+        ).fetchall()
 
-    cases = c.execute(
-        """
-        SELECT *
-        FROM cases
-        ORDER BY id DESC
-        """
-    ).fetchall()
+        alerts = c.execute(
+            """
+            SELECT
+                a.*,
+                p.name AS principal
+            FROM alerts a
+            LEFT JOIN principals p
+                ON p.id = a.principal_id
+            ORDER BY a.id DESC
+            """
+        ).fetchall()
 
-    sources = c.execute(
-        "SELECT * FROM sources"
-    ).fetchall()
+        cases = c.execute(
+            """
+            SELECT *
+            FROM cases
+            ORDER BY id DESC
+            """
+        ).fetchall()
 
-    check_count = c.execute(
-        "SELECT COUNT(*) AS n FROM checks"
-    ).fetchone()["n"]
+        sources = c.execute(
+            "SELECT * FROM sources"
+        ).fetchall()
+
+        check_count = c.execute(
+            "SELECT COUNT(*) AS n FROM checks"
+        ).fetchone()["n"]
+
+    else:
+        principals = c.execute(
+            """
+            SELECT *
+            FROM principals
+            WHERE user_id=?
+            ORDER BY risk DESC
+            """,
+            (uid,),
+        ).fetchall()
+
+        alerts = c.execute(
+            """
+            SELECT
+                a.*,
+                p.name AS principal
+            FROM alerts a
+            LEFT JOIN principals p
+                ON p.id = a.principal_id
+            WHERE a.user_id=?
+            ORDER BY a.id DESC
+            """,
+            (uid,),
+        ).fetchall()
+
+        cases = c.execute(
+            """
+            SELECT *
+            FROM cases
+            WHERE user_id=?
+            ORDER BY id DESC
+            """,
+            (uid,),
+        ).fetchall()
+
+        sources = []
+
+        check_count = c.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM checks
+            WHERE user_id=?
+            """,
+            (uid,),
+        ).fetchone()["n"]
 
     stats = {
         "principals": len(principals),
@@ -818,8 +946,8 @@ def home():
         cases=cases,
         sources=sources,
         stats=stats,
+        is_admin=is_admin,
     )
-
 
 
 # ============================================================
@@ -831,14 +959,27 @@ def home():
 def principal_profile(principal_id):
     c = db()
 
-    principal = c.execute(
-        """
-        SELECT *
-        FROM principals
-        WHERE id=?
-        """,
-        (principal_id,),
-    ).fetchone()
+    if session.get("role") == "admin":
+        principal = c.execute(
+            """
+            SELECT *
+            FROM principals
+            WHERE id=?
+            """,
+            (principal_id,),
+        ).fetchone()
+    else:
+        principal = c.execute(
+            """
+            SELECT *
+            FROM principals
+            WHERE id=? AND user_id=?
+            """,
+            (
+                principal_id,
+                session["uid"],
+            ),
+        ).fetchone()
 
     if not principal:
         c.close()
@@ -891,10 +1032,23 @@ def publish_principal_post(principal_id):
     """
     c = db()
 
-    principal = c.execute(
-        "SELECT * FROM principals WHERE id=?",
-        (principal_id,),
-    ).fetchone()
+    if session.get("role") == "admin":
+        principal = c.execute(
+            "SELECT * FROM principals WHERE id=?",
+            (principal_id,),
+        ).fetchone()
+    else:
+        principal = c.execute(
+            """
+            SELECT *
+            FROM principals
+            WHERE id=? AND user_id=?
+            """,
+            (
+                principal_id,
+                session["uid"],
+            ),
+        ).fetchone()
 
     c.close()
 
@@ -986,6 +1140,50 @@ def scan():
         or None
     )
 
+    c_auth = db()
+
+    try:
+        if principal_id:
+            if session.get("role") == "admin":
+                principal = c_auth.execute(
+                    "SELECT id, user_id FROM principals WHERE id=?",
+                    (principal_id,),
+                ).fetchone()
+            else:
+                principal = c_auth.execute(
+                    """
+                    SELECT id, user_id
+                    FROM principals
+                    WHERE id=? AND user_id=?
+                    """,
+                    (
+                        principal_id,
+                        session["uid"],
+                    ),
+                ).fetchone()
+
+            if not principal:
+                return jsonify(error="Principal not found."), 404
+        elif session.get("role") != "admin":
+            principal = c_auth.execute(
+                """
+                SELECT id, user_id
+                FROM principals
+                WHERE user_id=?
+                ORDER BY id
+                LIMIT 1
+                """,
+                (session["uid"],),
+            ).fetchone()
+
+            if not principal:
+                return jsonify(error="No private profile exists for this account."), 400
+
+            principal_id = principal["id"]
+
+    finally:
+        c_auth.close()
+
     caption = request.form.get(
         "caption",
         "",
@@ -1075,6 +1273,7 @@ def scan():
             check_row = c.execute(
                 """
                 INSERT INTO checks(
+                    user_id,
                     principal_id,
                     filename,
                     caption,
@@ -1083,10 +1282,11 @@ def scan():
                     findings,
                     created_at
                 )
-                VALUES(?,?,?,?,?,?,?)
+                VALUES(?,?,?,?,?,?,?,?)
                 RETURNING id
                 """,
                 (
+                    session["uid"],
                     principal_id,
                     filename,
                     caption,
@@ -1138,6 +1338,7 @@ def scan():
                 c.execute(
                     """
                     INSERT INTO alerts(
+                        user_id,
                         principal_id,
                         check_id,
                         risk_score,
@@ -1148,9 +1349,10 @@ def scan():
                         recommendation,
                         created_at
                     )
-                    VALUES(?,?,?,?,?,?,?,?,?)
+                    VALUES(?,?,?,?,?,?,?,?,?,?)
                     """,
                     (
+                        session["uid"],
                         principal_id,
                         check_id,
                         score,
@@ -1226,13 +1428,15 @@ def add_principal():
     c.execute(
         """
         INSERT INTO principals(
+            user_id,
             name,
             role,
             created_at
         )
-        VALUES(?,?,?)
+        VALUES(?,?,?,?)
         """,
         (
+            session["uid"],
             name,
             role,
             now(),
@@ -1259,14 +1463,27 @@ def add_principal():
 def close_alert(alert_id):
     c = db()
 
-    c.execute(
-        """
-        UPDATE alerts
-        SET status='Closed'
-        WHERE id=?
-        """,
-        (alert_id,),
-    )
+    if session.get("role") == "admin":
+        c.execute(
+            """
+            UPDATE alerts
+            SET status='Closed'
+            WHERE id=?
+            """,
+            (alert_id,),
+        )
+    else:
+        c.execute(
+            """
+            UPDATE alerts
+            SET status='Closed'
+            WHERE id=? AND user_id=?
+            """,
+            (
+                alert_id,
+                session["uid"],
+            ),
+        )
 
     c.commit()
     c.close()
@@ -1293,8 +1510,17 @@ def alert_to_case(alert_id):
         LEFT JOIN principals p
             ON p.id = a.principal_id
         WHERE a.id=?
-        """,
-        (alert_id,),
+        """
+        + (
+            ""
+            if session.get("role") == "admin"
+            else " AND a.user_id=?"
+        ),
+        (
+            (alert_id,)
+            if session.get("role") == "admin"
+            else (alert_id, session["uid"])
+        ),
     ).fetchone()
 
     if not alert:
@@ -1330,15 +1556,17 @@ def alert_to_case(alert_id):
     case_row = c.execute(
         """
         INSERT INTO cases(
+            user_id,
             title,
             owner,
             notes,
             created_at
         )
-        VALUES(?,?,?,?)
+        VALUES(?,?,?,?,?)
         RETURNING id
         """,
         (
+            session["uid"],
             title,
             session.get("email"),
             notes,
@@ -1397,14 +1625,16 @@ def create_case():
     c.execute(
         """
         INSERT INTO cases(
+            user_id,
             title,
             owner,
             notes,
             created_at
         )
-        VALUES(?,?,?,?)
+        VALUES(?,?,?,?,?)
         """,
         (
+            session["uid"],
             title,
             session.get("email"),
             notes,
@@ -1428,14 +1658,27 @@ def create_case():
 def close_case(case_id):
     c = db()
 
-    c.execute(
-        """
-        UPDATE cases
-        SET status='Closed'
-        WHERE id=?
-        """,
-        (case_id,),
-    )
+    if session.get("role") == "admin":
+        c.execute(
+            """
+            UPDATE cases
+            SET status='Closed'
+            WHERE id=?
+            """,
+            (case_id,),
+        )
+    else:
+        c.execute(
+            """
+            UPDATE cases
+            SET status='Closed'
+            WHERE id=? AND user_id=?
+            """,
+            (
+                case_id,
+                session["uid"],
+            ),
+        )
 
     c.commit()
     c.close()
@@ -1453,7 +1696,7 @@ def close_case(case_id):
 # ============================================================
 
 @app.post("/api/sources")
-@auth
+@admin_required
 def add_source():
     data = request.get_json(
         silent=True
@@ -1515,7 +1758,7 @@ def add_source():
 # ============================================================
 
 @app.get("/api/audit")
-@auth
+@admin_required
 def audit_api():
     c = db()
 
@@ -1548,7 +1791,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="4.1",
+        version="4.2",
     )
 
 
