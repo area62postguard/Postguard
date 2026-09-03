@@ -2010,6 +2010,237 @@ def audit_api():
 
 
 # ============================================================
+# ADMIN USER MANAGEMENT
+# Admin-only account overview. Password hashes are never exposed.
+# ============================================================
+
+ADMIN_USERS_PAGE = """
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PostGuard Admin · Users</title>
+    <style>
+        :root { color-scheme: dark; }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: #0b1020;
+            color: #f5f7fb;
+        }
+        header {
+            padding: 20px 28px;
+            border-bottom: 1px solid #26314a;
+            display: flex;
+            gap: 16px;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+        }
+        header h1 { margin: 0; font-size: 1.4rem; }
+        .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        .button {
+            display: inline-block;
+            padding: 10px 14px;
+            border: 1px solid #394762;
+            border-radius: 10px;
+            text-decoration: none;
+            background: #151c2f;
+            color: inherit;
+        }
+        main { padding: 28px; }
+        .summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 14px;
+            margin-bottom: 22px;
+        }
+        .card {
+            background: #151c2f;
+            border: 1px solid #26314a;
+            border-radius: 14px;
+            padding: 16px;
+        }
+        .number { font-size: 1.8rem; font-weight: 800; margin-top: 6px; }
+        .muted { color: #aeb9ce; }
+        .table-wrap {
+            overflow-x: auto;
+            border: 1px solid #26314a;
+            border-radius: 14px;
+            background: #151c2f;
+        }
+        table { width: 100%; border-collapse: collapse; min-width: 900px; }
+        th, td {
+            text-align: left;
+            padding: 13px 14px;
+            border-bottom: 1px solid #26314a;
+            vertical-align: top;
+        }
+        th {
+            color: #aeb9ce;
+            font-size: .82rem;
+            text-transform: uppercase;
+            letter-spacing: .04em;
+        }
+        tr:last-child td { border-bottom: 0; }
+        .role {
+            display: inline-block;
+            padding: 4px 8px;
+            border: 1px solid #3b4965;
+            border-radius: 999px;
+            font-size: .8rem;
+            text-transform: uppercase;
+            letter-spacing: .04em;
+        }
+        .admin { font-weight: 800; }
+        .note { margin-top: 18px; color: #aeb9ce; line-height: 1.5; }
+    </style>
+</head>
+<body>
+<header>
+    <div>
+        <h1>PostGuard Admin · Registered Users</h1>
+        <div class="muted">Signed in as {{ session.get("email") }}</div>
+    </div>
+    <div class="actions">
+        <a class="button" href="{{ url_for('home') }}">Dashboard</a>
+        <form method="post" action="{{ url_for('logout') }}" style="margin:0">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="button" type="submit">Sign out</button>
+        </form>
+    </div>
+</header>
+
+<main>
+    <section class="summary">
+        <div class="card">
+            <div class="muted">Registered accounts</div>
+            <div class="number">{{ users|length }}</div>
+        </div>
+        <div class="card">
+            <div class="muted">Customer accounts</div>
+            <div class="number">{{ customer_count }}</div>
+        </div>
+        <div class="card">
+            <div class="muted">Admin accounts</div>
+            <div class="number">{{ admin_count }}</div>
+        </div>
+    </section>
+
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th>Registered</th>
+                    <th>Principals</th>
+                    <th>Scans</th>
+                    <th>Alerts</th>
+                    <th>Cases</th>
+                    <th>Last activity</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in users %}
+                <tr>
+                    <td>{{ user["id"] }}</td>
+                    <td class="{% if user['role'] == 'admin' %}admin{% endif %}">
+                        {{ user["email"] }}
+                    </td>
+                    <td><span class="role">{{ user["role"] or "user" }}</span></td>
+                    <td>{{ user["created_at"] or "—" }}</td>
+                    <td>{{ user["principal_count"] }}</td>
+                    <td>{{ user["check_count"] }}</td>
+                    <td>{{ user["alert_count"] }}</td>
+                    <td>{{ user["case_count"] }}</td>
+                    <td>{{ user["last_activity"] or "No activity recorded" }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="9">No registered users found.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <p class="note">
+        Passwords are not shown here. PostGuard stores password hashes and this
+        page deliberately never retrieves them.
+    </p>
+</main>
+</body>
+</html>
+"""
+
+
+@app.get("/admin/users")
+@admin_required
+def admin_users():
+    c = db()
+
+    users = c.execute(
+        """
+        SELECT
+            u.id,
+            u.email,
+            u.role,
+            u.created_at,
+            (
+                SELECT COUNT(*)
+                FROM principals p
+                WHERE p.user_id = u.id
+            ) AS principal_count,
+            (
+                SELECT COUNT(*)
+                FROM checks ch
+                WHERE ch.user_id = u.id
+            ) AS check_count,
+            (
+                SELECT COUNT(*)
+                FROM alerts a
+                WHERE a.user_id = u.id
+            ) AS alert_count,
+            (
+                SELECT COUNT(*)
+                FROM cases ca
+                WHERE ca.user_id = u.id
+            ) AS case_count,
+            (
+                SELECT MAX(au.created_at)
+                FROM audit au
+                WHERE au.user_id = u.id
+            ) AS last_activity
+        FROM users u
+        ORDER BY
+            CASE WHEN u.role='admin' THEN 0 ELSE 1 END,
+            u.id ASC
+        """
+    ).fetchall()
+
+    c.close()
+
+    admin_count = sum(
+        (user["role"] or "user") == "admin"
+        for user in users
+    )
+
+    customer_count = sum(
+        (user["role"] or "user") != "admin"
+        for user in users
+    )
+
+    return render_template_string(
+        ADMIN_USERS_PAGE,
+        users=users,
+        admin_count=admin_count,
+        customer_count=customer_count,
+    )
+
+
+# ============================================================
 # HEALTH CHECK
 # ============================================================
 
@@ -2018,7 +2249,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="4.3",
+        version="4.4",
     )
 
 
