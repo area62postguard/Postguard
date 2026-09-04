@@ -178,6 +178,9 @@ class Database:
     def commit(self):
         self.connection.commit()
 
+    def rollback(self):
+        self.connection.rollback()
+
     def close(self):
         self.connection.close()
 
@@ -1405,20 +1408,29 @@ def register():
             flash("An account with that email already exists.")
             return render_template_string(AUTH_ENTRY_PAGE, mode="register")
 
-        user = c.execute(
-            """
-            INSERT INTO users(email, password, role, created_at, email_verified)
-            VALUES(?,?,?,?,?)
-            RETURNING id
-            """,
-            (
-                email,
-                generate_password_hash(password),
-                "user",
-                now(),
-                0,
-            ),
-        ).fetchone()
+        try:
+            user = c.execute(
+                """
+                INSERT INTO users(email, password, role, created_at, email_verified)
+                VALUES(?,?,?,?,?)
+                RETURNING id
+                """,
+                (
+                    email,
+                    generate_password_hash(password),
+                    "user",
+                    now(),
+                    0,
+                ),
+            ).fetchone()
+        except (psycopg.errors.UniqueViolation, sqlite3.IntegrityError):
+            # The pre-check above keeps the normal path friendly, while this
+            # database-level catch safely handles two simultaneous registration
+            # requests racing for the same unique email address.
+            c.rollback()
+            c.close()
+            flash("An account with that email already exists.")
+            return render_template_string(AUTH_ENTRY_PAGE, mode="register")
 
         user_id = user["id"]
 
@@ -5299,7 +5311,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="7.0",
+        version="7.2",
     )
 
 
@@ -5323,7 +5335,7 @@ def ready():
     return jsonify(
         status="ready" if ok else "not_ready",
         service="postguard",
-        version="7.0",
+        version="7.2",
         checks=checks,
     ), 200 if ok else 503
 
