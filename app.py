@@ -302,6 +302,14 @@ def init():
             consumed_at TEXT,
             user_id INTEGER
         );
+
+        CREATE TABLE IF NOT EXISTS demo_trials(
+            email TEXT PRIMARY KEY,
+            started_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            consumed_at TEXT,
+            user_id INTEGER
+        );
         """
     )
 
@@ -362,6 +370,7 @@ def init():
     ensure_column("users", "stripe_customer_id", "TEXT")
     ensure_column("users", "stripe_subscription_id", "TEXT")
     ensure_column("users", "stripe_checkout_session_id", "TEXT")
+    ensure_column("users", "trial_ends_at", "TEXT")
     c.execute("UPDATE users SET enabled=1 WHERE enabled IS NULL")
     c.execute("UPDATE users SET reset_required=0 WHERE reset_required IS NULL")
     c.execute("UPDATE users SET email_verified=0 WHERE email_verified IS NULL")
@@ -564,7 +573,7 @@ def send_email(to_address, subject, text_body, cc_addresses=None):
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
-            "User-Agent": "PostGuard/7.6",
+            "User-Agent": "PostGuard/7.6.5",
         },
     )
 
@@ -707,7 +716,7 @@ def auth(f):
 
         c = db()
         account = c.execute(
-            "SELECT role, enabled, reset_required, email_verified FROM users WHERE id=?",
+            "SELECT role, enabled, reset_required, email_verified, subscription_status, trial_ends_at FROM users WHERE id=?",
             (session["uid"],),
         ).fetchone()
         c.close()
@@ -720,6 +729,24 @@ def auth(f):
             session.clear()
             flash("This PostGuard account has been disabled by an administrator.")
             return redirect(url_for("login"))
+
+        if account["role"] != "admin" and account["subscription_status"] == "trialing" and account["trial_ends_at"]:
+            try:
+                trial_end = datetime.fromisoformat(account["trial_ends_at"])
+                if trial_end.tzinfo is None:
+                    trial_end = trial_end.replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) >= trial_end:
+                    c2 = db()
+                    c2.execute("UPDATE users SET subscription_status='trial_expired' WHERE id=?", (session["uid"],))
+                    c2.commit()
+                    c2.close()
+                    session.clear()
+                    flash("Your 7-day PostGuard demo has ended. Choose a plan to continue using the service.")
+                    return redirect(url_for("join_postguard"))
+            except (TypeError, ValueError):
+                session.clear()
+                flash("Your demo status could not be verified. Please sign in again or contact PostGuard.")
+                return redirect(url_for("login"))
 
         session["role"] = account["role"] or "user"
 
@@ -1162,15 +1189,16 @@ PAID_SPLASH_PAGE = r"""
 <style>
 :root{color-scheme:dark;--bg:#07101d;--card:#0f1c2e;--line:#263c5c;--text:#f7f9fd;--muted:#9badc6;--blue:#8db3ff;--green:#8de6b7}
 *{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at 15% 10%,rgba(66,113,205,.18),transparent 28%),#07101d;color:var(--text);font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif}
-.wrap{min-height:100vh;max-width:1220px;margin:auto;padding:44px 24px 64px}.top{display:flex;align-items:center;justify-content:space-between;gap:24px}.brand{display:flex;align-items:center;gap:14px;font-weight:900;letter-spacing:.04em}.brand img{width:62px;height:62px;object-fit:cover;border-radius:50%;border:1px solid #355987}.login{color:#dce7fb;text-decoration:none;border:1px solid #345071;padding:10px 16px;border-radius:10px}.hero{text-align:center;max-width:780px;margin:54px auto 38px}.hero img{width:160px;height:160px;object-fit:cover;border-radius:50%;border:1px solid #355987;box-shadow:0 20px 60px rgba(0,0,0,.35)}.eyebrow{margin-top:20px;color:var(--blue);font-size:.78rem;font-weight:850;text-transform:uppercase;letter-spacing:.16em}h1{font-size:clamp(2.4rem,5vw,4.6rem);line-height:1;margin:13px 0 18px;letter-spacing:-.05em}.hero p{color:#b7c5d8;line-height:1.7;font-size:1.05rem}.notice{max-width:760px;margin:0 auto 28px;padding:13px 16px;border:1px solid #40536e;background:#101b2b;border-radius:12px;color:#c9d5e6;text-align:center}.cancel{border-color:#70444b;background:#281a20;color:#ffd7da}.plans{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}.plan{position:relative;background:linear-gradient(180deg,#122137,#0c1727);border:1px solid var(--line);border-radius:20px;padding:26px;box-shadow:0 18px 50px rgba(0,0,0,.2)}.plan.featured{border-color:#6a91d3;transform:translateY(-6px)}.tag{position:absolute;top:16px;right:16px;background:#1d3b67;color:#cfe0ff;padding:6px 9px;border-radius:999px;font-size:.7rem;font-weight:800}.plan h2{margin:0 0 8px;font-size:1.35rem}.strap{color:var(--muted);min-height:44px;font-size:.9rem;line-height:1.5}.price{font-size:2.45rem;font-weight:900;margin:18px 0 2px;letter-spacing:-.04em}.per{color:var(--muted);font-size:.85rem}.features{list-style:none;padding:0;margin:22px 0}.features li{padding:8px 0;color:#c9d5e5;font-size:.88rem}.features li:before{content:"✓";color:var(--green);font-weight:900;margin-right:9px}.buy{width:100%;border:0;border-radius:11px;padding:13px 15px;font-weight:900;background:linear-gradient(135deg,#eef4ff,#b9d0fb);color:#07101d;cursor:pointer}.buy:disabled{opacity:.5;cursor:not-allowed}.small{margin:26px auto 0;max-width:830px;text-align:center;color:#778ba6;font-size:.78rem;line-height:1.6}.small a{color:#a9c8ff}.flash{max-width:760px;margin:0 auto 20px;border:1px solid #6b464d;background:#2a1b21;color:#ffd9dc;border-radius:12px;padding:12px 14px;text-align:center}@media(max-width:900px){.plans{grid-template-columns:1fr}.plan.featured{transform:none}.top{align-items:flex-start}.hero{margin-top:38px}}
+.wrap{min-height:100vh;max-width:1220px;margin:auto;padding:44px 24px 64px}.top{display:flex;align-items:center;justify-content:space-between;gap:24px}.brand{display:flex;align-items:center;gap:14px;font-weight:900;letter-spacing:.04em}.brand img{width:62px;height:62px;object-fit:cover;border-radius:50%;border:1px solid #355987}.login{color:#dce7fb;text-decoration:none;border:1px solid #345071;padding:10px 16px;border-radius:10px}.hero{text-align:center;max-width:780px;margin:54px auto 38px}.hero img{width:160px;height:160px;object-fit:cover;border-radius:50%;border:1px solid #355987;box-shadow:0 20px 60px rgba(0,0,0,.35)}.eyebrow{margin-top:20px;color:var(--blue);font-size:.78rem;font-weight:850;text-transform:uppercase;letter-spacing:.16em}h1{font-size:clamp(2.4rem,5vw,4.6rem);line-height:1;margin:13px 0 18px;letter-spacing:-.05em}.hero p{color:#b7c5d8;line-height:1.7;font-size:1.05rem}.notice{max-width:760px;margin:0 auto 28px;padding:13px 16px;border:1px solid #40536e;background:#101b2b;border-radius:12px;color:#c9d5e6;text-align:center}.cancel{border-color:#70444b;background:#281a20;color:#ffd7da}.demo{max-width:760px;margin:0 auto 30px;background:linear-gradient(135deg,#132a24,#0d1d1a);border:1px solid #2f745a;border-radius:20px;padding:24px;text-align:center;box-shadow:0 18px 50px rgba(0,0,0,.18)}.demo h2{margin:0 0 8px}.demo p{color:#b9d9cb;line-height:1.55}.demo .free{font-size:2rem;font-weight:900;margin:8px 0}.demo .buy{max-width:360px}.plans{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}.plan{position:relative;background:linear-gradient(180deg,#122137,#0c1727);border:1px solid var(--line);border-radius:20px;padding:26px;box-shadow:0 18px 50px rgba(0,0,0,.2)}.plan.featured{border-color:#6a91d3;transform:translateY(-6px)}.tag{position:absolute;top:16px;right:16px;background:#1d3b67;color:#cfe0ff;padding:6px 9px;border-radius:999px;font-size:.7rem;font-weight:800}.plan h2{margin:0 0 8px;font-size:1.35rem}.strap{color:var(--muted);min-height:44px;font-size:.9rem;line-height:1.5}.price{font-size:2.45rem;font-weight:900;margin:18px 0 2px;letter-spacing:-.04em}.per{color:var(--muted);font-size:.85rem}.features{list-style:none;padding:0;margin:22px 0}.features li{padding:8px 0;color:#c9d5e5;font-size:.88rem}.features li:before{content:"✓";color:var(--green);font-weight:900;margin-right:9px}.buy{width:100%;border:0;border-radius:11px;padding:13px 15px;font-weight:900;background:linear-gradient(135deg,#eef4ff,#b9d0fb);color:#07101d;cursor:pointer}.buy:disabled{opacity:.5;cursor:not-allowed}.small{margin:26px auto 0;max-width:830px;text-align:center;color:#778ba6;font-size:.78rem;line-height:1.6}.small a{color:#a9c8ff}.flash{max-width:760px;margin:0 auto 20px;border:1px solid #6b464d;background:#2a1b21;color:#ffd9dc;border-radius:12px;padding:12px 14px;text-align:center}@media(max-width:900px){.plans{grid-template-columns:1fr}.plan.featured{transform:none}.top{align-items:flex-start}.hero{margin-top:38px}}
 </style>
 </head>
 <body><div class="wrap">
 <div class="top"><div class="brand"><img src="{{ url_for('static', filename='postguard_logo.jpg') }}" alt="PostGuard logo"><span>POSTGUARD</span></div><a class="login" href="{{ url_for('login') }}">Existing user sign in</a></div>
-<div class="hero"><img src="{{ url_for('static', filename='postguard_logo.jpg') }}" alt="PostGuard"><div class="eyebrow">Protect what you post</div><h1>Choose your level of protection.</h1><p>PostGuard registration is available after a successful subscription payment. Select a plan, complete secure checkout, then create your account using the email address used at checkout.</p></div>
+<div class="hero"><img src="{{ url_for('static', filename='postguard_logo.jpg') }}" alt="PostGuard"><div class="eyebrow">Protect what you post</div><h1>Choose your level of protection.</h1><p>Try PostGuard free for 7 days with no payment required, or choose a paid monthly plan. Demo users receive the same secure account setup and email verification before access.</p></div>
 {% with messages = get_flashed_messages() %}{% if messages %}<div class="flash">{{ messages[-1] }}</div>{% endif %}{% endwith %}
 {% if request.args.get('cancelled') %}<div class="notice cancel">Payment was cancelled. No PostGuard account has been created.</div>{% endif %}
-{% if not payments_ready %}<div class="notice">Secure payments are currently being configured. Registration remains locked until payment processing is available.</div>{% endif %}
+{% if not payments_ready %}<div class="notice">Secure payments are currently being configured. The 7-day free demo remains available.</div>{% endif %}
+<div class="demo"><h2>7-Day Free Demo</h2><div class="free">£0 for 7 days</div><p>Test PostGuard before purchasing. No payment is required to start the demo. One demo per email address. After 7 days, choose a paid plan to continue using the service.</p><form method="post" action="{{ url_for('start_demo') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="buy">Start free 7-day demo</button></form></div>
 <div class="plans">
 {% for key, plan in plans.items() %}
 <div class="plan {% if key == 'executive' %}featured{% endif %}">{% if key == 'executive' %}<div class="tag">POPULAR</div>{% endif %}<h2>{{ plan.name }}</h2><div class="strap">{{ plan.strap }}</div><div class="price">{{ plan.price }}</div><div class="per">per month · recurring subscription</div><ul class="features">{% for item in plan.features %}<li>{{ item }}</li>{% endfor %}</ul><form method="post" action="{{ url_for('start_checkout', plan_key=key) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="buy" {% if not payments_ready %}disabled{% endif %}>Choose {{ plan.name }}</button></form></div>
@@ -1186,6 +1214,20 @@ def join_postguard():
     if "uid" in session:
         return redirect(url_for("home"))
     return render_template_string(PAID_SPLASH_PAGE, plans=PLANS, payments_ready=stripe_configured())
+
+
+@app.post("/demo/start")
+@limiter.limit("5 per minute")
+def start_demo():
+    if "uid" in session:
+        return redirect(url_for("home"))
+    session.pop("paid_checkout_session_id", None)
+    session.pop("paid_checkout_email", None)
+    session.pop("paid_plan", None)
+    session.pop("paid_checkout_at", None)
+    session["demo_registration"] = True
+    session["demo_registration_at"] = int(time.time())
+    return redirect(url_for("register"))
 
 
 @app.post("/subscribe/<plan_key>")
@@ -1234,6 +1276,40 @@ def payment_success():
         return redirect(url_for("join_postguard"))
 
     c = db()
+
+    # A customer who started with the free demo can purchase later using the
+    # same email. Upgrade that existing account instead of trying to create a
+    # duplicate registration.
+    existing_user = c.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+    if existing_user and (existing_user["role"] or "user") != "admin":
+        try:
+            existing_checkout = c.execute("SELECT * FROM paid_checkouts WHERE checkout_session_id=?", (checkout_session_id,)).fetchone()
+            if not existing_checkout:
+                c.execute(
+                    """INSERT INTO paid_checkouts(checkout_session_id,email,plan,stripe_customer_id,stripe_subscription_id,payment_status,created_at,consumed_at,user_id) VALUES(?,?,?,?,?,?,?,?,?)""",
+                    (checkout_session_id, email, plan_key, checkout.get("customer"), checkout.get("subscription"), payment_status, now(), now(), existing_user["id"]),
+                )
+            elif existing_checkout["consumed_at"]:
+                c.close()
+                flash("This checkout has already been applied to your PostGuard account.")
+                return redirect(url_for("login"))
+            else:
+                c.execute("UPDATE paid_checkouts SET consumed_at=?, user_id=? WHERE checkout_session_id=?", (now(), existing_user["id"], checkout_session_id))
+
+            c.execute(
+                """UPDATE users SET subscription_plan=?, subscription_status='active', stripe_customer_id=?, stripe_subscription_id=?, stripe_checkout_session_id=?, trial_ends_at=NULL WHERE id=?""",
+                (plan_key, checkout.get("customer"), checkout.get("subscription"), checkout_session_id, existing_user["id"]),
+            )
+            c.commit()
+            c.close()
+            flash("Payment confirmed. Your PostGuard account has been upgraded. Sign in to continue.")
+            return redirect(url_for("login"))
+        except (psycopg.errors.UniqueViolation, sqlite3.IntegrityError):
+            c.rollback()
+            c.close()
+            flash("Your payment was received, but the account upgrade needs review. Please contact PostGuard.")
+            return redirect(url_for("login"))
+
     existing = c.execute("SELECT * FROM paid_checkouts WHERE checkout_session_id=?", (checkout_session_id,)).fetchone()
     if existing and existing["consumed_at"]:
         c.close()
@@ -1436,7 +1512,7 @@ input::placeholder{color:#61748f}
                 {% if mode == 'register' %}
                     <h2>Create your PostGuard account</h2>
                     <p>Set up secure access to your private PostGuard workspace.</p>
-                    {% if paid_plan %}<p style="margin-top:9px;color:#7fe0ae;font-weight:800">{{ paid_plan.name }} · {{ paid_plan.price }}/month — payment confirmed</p>{% endif %}
+                    {% if demo_mode %}<p style="margin-top:9px;color:#7fe0ae;font-weight:800">7-Day Free Demo · no payment required</p>{% elif paid_plan %}<p style="margin-top:9px;color:#7fe0ae;font-weight:800">{{ paid_plan.name }} · {{ paid_plan.price }}/month — payment confirmed</p>{% endif %}
                 {% else %}
                     <h2>Welcome back</h2>
                     <p>Sign in to your PostGuard intelligence centre.</p>
@@ -1463,7 +1539,7 @@ input::placeholder{color:#61748f}
                 <div class="field">
                     <label for="email">Email address</label>
                     <input id="email" name="email" type="email" autocomplete="email"
-                           value="{{ paid_email|default('') }}" placeholder="you@example.com" {% if mode == 'register' %}readonly{% endif %} required>
+                           value="{{ paid_email|default('') }}" placeholder="you@example.com" {% if mode == 'register' and not demo_mode %}readonly{% endif %} required>
                 </div>
 
                 <div class="field">
@@ -1606,34 +1682,46 @@ def register():
     paid_checkout_email = session.get("paid_checkout_email", "")
     paid_plan = session.get("paid_plan", "")
     paid_checkout_at = int(session.get("paid_checkout_at", 0) or 0)
-    if (not paid_checkout_session_id or not paid_checkout_email or paid_plan not in PLANS
-            or not paid_checkout_at or time.time() - paid_checkout_at > 3600):
+    demo_mode = bool(session.get("demo_registration"))
+    demo_registration_at = int(session.get("demo_registration_at", 0) or 0)
+
+    paid_mode = bool(
+        paid_checkout_session_id and paid_checkout_email and paid_plan in PLANS
+        and paid_checkout_at and time.time() - paid_checkout_at <= 3600
+    )
+    demo_mode = bool(demo_mode and demo_registration_at and time.time() - demo_registration_at <= 3600)
+
+    if not paid_mode and not demo_mode:
         session.pop("paid_checkout_session_id", None)
         session.pop("paid_checkout_email", None)
         session.pop("paid_plan", None)
         session.pop("paid_checkout_at", None)
-        flash("Choose a PostGuard plan and complete payment before registering.")
+        session.pop("demo_registration", None)
+        session.pop("demo_registration_at", None)
+        flash("Choose a paid plan or start the 7-day free demo before registering.")
         return redirect(url_for("join_postguard"))
 
-    c_paid = db()
-    paid_row = c_paid.execute(
-        "SELECT * FROM paid_checkouts WHERE checkout_session_id=?",
-        (paid_checkout_session_id,),
-    ).fetchone()
-    c_paid.close()
-    if (not paid_row or paid_row["consumed_at"] or paid_row["email"].strip().lower() != paid_checkout_email.strip().lower()
-            or paid_row["plan"] != paid_plan or paid_row["payment_status"] not in ("paid", "no_payment_required")):
-        flash("A valid unused paid checkout is required before registration.")
-        return redirect(url_for("join_postguard"))
+    paid_row = None
+    if paid_mode:
+        c_paid = db()
+        paid_row = c_paid.execute(
+            "SELECT * FROM paid_checkouts WHERE checkout_session_id=?",
+            (paid_checkout_session_id,),
+        ).fetchone()
+        c_paid.close()
+        if (not paid_row or paid_row["consumed_at"] or paid_row["email"].strip().lower() != paid_checkout_email.strip().lower()
+                or paid_row["plan"] != paid_plan or paid_row["payment_status"] not in ("paid", "no_payment_required")):
+            flash("A valid unused paid checkout is required before registration.")
+            return redirect(url_for("join_postguard"))
 
     if request.method == "POST":
-        email = paid_checkout_email.strip().lower()
+        email = (paid_checkout_email if paid_mode else request.form.get("email", "")).strip().lower()
         password = request.form.get("password", "")
         confirm = request.form.get("confirm", "")
 
         if not email:
             flash("Email address is required.")
-            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan])
+            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan] if paid_mode else None, demo_mode=demo_mode)
 
         email_pattern = (
             r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+"
@@ -1643,19 +1731,19 @@ def register():
 
         if not re.match(email_pattern, email):
             flash("Enter a valid email address.")
-            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan])
+            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan] if paid_mode else None, demo_mode=demo_mode)
 
         if not password:
             flash("Password is required.")
-            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan])
+            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan] if paid_mode else None, demo_mode=demo_mode)
 
         if password != confirm:
             flash("Passwords do not match.")
-            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan])
+            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan] if paid_mode else None, demo_mode=demo_mode)
 
         if len(password) < 12:
             flash("Password must be at least 12 characters.")
-            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan])
+            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan] if paid_mode else None, demo_mode=demo_mode)
 
         c = db()
         existing = c.execute(
@@ -1666,7 +1754,14 @@ def register():
         if existing:
             c.close()
             flash("An account with that email already exists.")
-            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan])
+            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan] if paid_mode else None, demo_mode=demo_mode)
+
+        if demo_mode:
+            previous_demo = c.execute("SELECT email FROM demo_trials WHERE email=?", (email,)).fetchone()
+            if previous_demo:
+                c.close()
+                flash("A 7-day PostGuard demo has already been used with this email address. Choose a paid plan to continue.")
+                return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email="", paid_plan=None, demo_mode=True)
 
         try:
             user = c.execute(
@@ -1674,9 +1769,9 @@ def register():
                 INSERT INTO users(
                     email, password, role, created_at, email_verified,
                     subscription_plan, subscription_status, stripe_customer_id,
-                    stripe_subscription_id, stripe_checkout_session_id
+                    stripe_subscription_id, stripe_checkout_session_id, trial_ends_at
                 )
-                VALUES(?,?,?,?,?,?,?,?,?,?)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?)
                 RETURNING id
                 """,
                 (
@@ -1685,11 +1780,12 @@ def register():
                     "user",
                     now(),
                     0,
-                    paid_plan,
-                    "active",
-                    paid_row["stripe_customer_id"],
-                    paid_row["stripe_subscription_id"],
-                    paid_checkout_session_id,
+                    paid_plan if paid_mode else "demo",
+                    "active" if paid_mode else "trialing",
+                    paid_row["stripe_customer_id"] if paid_mode else None,
+                    paid_row["stripe_subscription_id"] if paid_mode else None,
+                    paid_checkout_session_id if paid_mode else None,
+                    None if paid_mode else (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
                 ),
             ).fetchone()
         except (psycopg.errors.UniqueViolation, sqlite3.IntegrityError):
@@ -1699,7 +1795,7 @@ def register():
             c.rollback()
             c.close()
             flash("An account with that email already exists.")
-            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan])
+            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan] if paid_mode else None, demo_mode=demo_mode)
 
         user_id = user["id"]
 
@@ -1726,10 +1822,18 @@ def register():
                 now(),
             ),
         )
-        c.execute(
-            "UPDATE paid_checkouts SET consumed_at=?, user_id=? WHERE checkout_session_id=? AND consumed_at IS NULL",
-            (now(), user_id, paid_checkout_session_id),
-        )
+        if paid_mode:
+            c.execute(
+                "UPDATE paid_checkouts SET consumed_at=?, user_id=? WHERE checkout_session_id=? AND consumed_at IS NULL",
+                (now(), user_id, paid_checkout_session_id),
+            )
+        else:
+            trial_started = datetime.now(timezone.utc)
+            trial_expires = trial_started + timedelta(days=7)
+            c.execute(
+                "INSERT INTO demo_trials(email,started_at,expires_at,consumed_at,user_id) VALUES(?,?,?,?,?)",
+                (email, trial_started.isoformat(), trial_expires.isoformat(), now(), user_id),
+            )
 
         c.commit()
         c.close()
@@ -1739,16 +1843,20 @@ def register():
             user_id,
         )
 
-        plan_name = PLANS[paid_plan]["name"]
-        plan_price = PLANS[paid_plan]["price"]
+        plan_name = PLANS[paid_plan]["name"] if paid_mode else "PostGuard 7-Day Free Demo"
+        plan_price = PLANS[paid_plan]["price"] if paid_mode else "£0"
         admin_email = os.getenv("POSTGUARD_ADMIN_EMAIL", "").strip().lower()
         try:
+            if paid_mode:
+                welcome_detail = f"Your {plan_name} subscription ({plan_price}/month) has been linked to your new account.\n"
+            else:
+                welcome_detail = "Your 7-day free PostGuard demo has started. No payment has been taken. After 7 days, choose a paid plan to continue using the service.\n"
             send_email(
                 email,
                 f"Welcome to PostGuard — {plan_name}",
                 (
                     f"Welcome to PostGuard.\n\n"
-                    f"Your {plan_name} subscription ({plan_price}/month) has been linked to your new account.\n"
+                    + welcome_detail +
                     "Please complete the separate email-verification message before signing in.\n\n"
                     "PostGuard provides security and privacy decision support. The final decision to publish content remains with you.\n\n"
                     "PostGuard\nwww.postguard.uk"
@@ -1778,13 +1886,16 @@ def register():
         session.pop("paid_checkout_email", None)
         session.pop("paid_plan", None)
         session.pop("paid_checkout_at", None)
+        session.pop("demo_registration", None)
+        session.pop("demo_registration_at", None)
         return redirect(url_for("login"))
 
     return render_template_string(
         AUTH_ENTRY_PAGE,
         mode="register",
-        paid_email=paid_checkout_email,
-        paid_plan=PLANS[paid_plan],
+        paid_email=paid_checkout_email if paid_mode else "",
+        paid_plan=PLANS[paid_plan] if paid_mode else None,
+        demo_mode=demo_mode,
     )
 
 
@@ -2072,6 +2183,23 @@ def login():
                         (user["id"],),
                     )
                     c.commit()
+
+            if role != "admin" and user["subscription_status"] in ("trialing", "trial_expired"):
+                expired = user["subscription_status"] == "trial_expired"
+                if user["trial_ends_at"] and not expired:
+                    try:
+                        trial_end = datetime.fromisoformat(user["trial_ends_at"])
+                        if trial_end.tzinfo is None:
+                            trial_end = trial_end.replace(tzinfo=timezone.utc)
+                        expired = datetime.now(timezone.utc) >= trial_end
+                    except (TypeError, ValueError):
+                        expired = True
+                if expired:
+                    c.execute("UPDATE users SET subscription_status='trial_expired' WHERE id=?", (user["id"],))
+                    c.commit()
+                    c.close()
+                    flash("Your 7-day PostGuard demo has ended. Choose a plan to continue using the service.")
+                    return redirect(url_for("join_postguard"))
 
             c.close()
 
@@ -5746,7 +5874,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="7.5",
+        version="7.6.5",
     )
 
 
@@ -5770,7 +5898,7 @@ def ready():
     return jsonify(
         status="ready" if ok else "not_ready",
         service="postguard",
-        version="7.5",
+        version="7.6.5",
         checks=checks,
     ), 200 if ok else 503
 
