@@ -1312,9 +1312,23 @@ def google_vision_scan(path):
 
             # Inspect a tightly limited number of Google-returned public pages.
             # SSRF protections reject private/local/reserved targets and redirects.
+            # Run matched-page inspection only after Web Detection URLs are populated.
+            # Normalise URL values defensively in case a client/library version returns
+            # structured objects rather than plain strings.
+            _page_urls = []
+            for _page in evidence.get("matching_pages", []):
+                if isinstance(_page, str):
+                    _url = _page
+                elif isinstance(_page, dict):
+                    _url = _page.get("url") or ""
+                else:
+                    _url = getattr(_page, "url", "") or ""
+                if _url:
+                    _page_urls.append(str(_url))
+            evidence["matching_pages"] = _page_urls[:10]
             evidence["page_intelligence"] = _matched_page_intelligence(
                 evidence["matching_pages"],
-                evidence["visible_text"],
+                evidence.get("visible_text", ""),
             )
 
             if exactish_count or page_count:
@@ -4278,8 +4292,8 @@ a{color:inherit}.main{max-width:1000px;margin:auto;padding:30px 20px}
     {% if vision_report.full_matches %}<div class="muted" style="margin-top:12px">Full image matches: {{ vision_report.full_matches|length }}</div>{% endif %}
     {% if vision_report.partial_matches %}<div class="muted">Partial image matches: {{ vision_report.partial_matches|length }}</div>{% endif %}
 
-    {% if vision_report.page_intelligence %}
     <h3 style="margin-top:22px">Matched-page intelligence</h3>
+    {% if vision_report.page_intelligence %}
     <p class="muted">PostGuard safely inspected up to three public pages returned by Google. Redirects and non-public network destinations are not followed.</p>
     {% for page in vision_report.page_intelligence %}
     <div class="source-card">
@@ -4303,6 +4317,15 @@ a{color:inherit}.main{max-width:1000px;margin:auto;padding:30px 20px}
         {% endif %}
     </div>
     {% endfor %}
+    {% else %}
+    <div class="source-card">
+        <div class="source-title">No public page context was automatically inspected</div>
+        <div class="muted" style="margin-top:6px">
+            Google may have returned an image match without a usable public page URL, or the source
+            was blocked by PostGuard's public-network/redirect safety checks. Existing Web Detection
+            matches remain available above for manual review.
+        </div>
+    </div>
     {% endif %}
 </section>
 {% endif %}
