@@ -13,7 +13,7 @@ import ssl
 import struct
 import time
 from email.message import EmailMessage
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
@@ -290,6 +290,18 @@ def init():
             user_agent TEXT,
             created_at TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS paid_checkouts(
+            checkout_session_id TEXT PRIMARY KEY,
+            email TEXT NOT NULL,
+            plan TEXT NOT NULL,
+            stripe_customer_id TEXT,
+            stripe_subscription_id TEXT,
+            payment_status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            consumed_at TEXT,
+            user_id INTEGER
+        );
         """
     )
 
@@ -345,6 +357,11 @@ def init():
     ensure_column("users", "mfa_secret", "TEXT")
     ensure_column("users", "mfa_enabled", "INTEGER DEFAULT 0")
     ensure_column("users", "last_login_at", "TEXT")
+    ensure_column("users", "subscription_plan", "TEXT")
+    ensure_column("users", "subscription_status", "TEXT")
+    ensure_column("users", "stripe_customer_id", "TEXT")
+    ensure_column("users", "stripe_subscription_id", "TEXT")
+    ensure_column("users", "stripe_checkout_session_id", "TEXT")
     c.execute("UPDATE users SET enabled=1 WHERE enabled IS NULL")
     c.execute("UPDATE users SET reset_required=0 WHERE reset_required IS NULL")
     c.execute("UPDATE users SET email_verified=0 WHERE email_verified IS NULL")
@@ -511,7 +528,7 @@ def _smtp_configured():
     return bool(api_key and os.getenv("POSTGUARD_EMAIL_FROM", "").strip())
 
 
-def send_email(to_address, subject, text_body):
+def send_email(to_address, subject, text_body, cc_addresses=None):
     """Send transactional email through Resend's HTTPS API.
 
     POSTGUARD_RESEND_API_KEY is preferred. For a zero-downtime migration from the
@@ -528,12 +545,17 @@ def send_email(to_address, subject, text_body):
         app.logger.warning("Transactional email not configured; subject=%s", subject)
         return False
 
-    payload = json.dumps({
+    message_payload = {
         "from": sender,
         "to": [to_address],
         "subject": subject,
         "text": text_body,
-    }).encode("utf-8")
+    }
+    cleaned_cc = [x.strip() for x in (cc_addresses or []) if x and x.strip()]
+    if cleaned_cc:
+        message_payload["cc"] = cleaned_cc
+
+    payload = json.dumps(message_payload).encode("utf-8")
 
     req = Request(
         "https://api.resend.com/emails",
@@ -542,7 +564,7 @@ def send_email(to_address, subject, text_body):
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
-            "User-Agent": "PostGuard/7.1",
+            "User-Agent": "PostGuard/7.6",
         },
     )
 
@@ -1032,6 +1054,209 @@ def risk(score):
 # ============================================================
 
 
+
+# ============================================================
+# PAID SIGN-UP / STRIPE CHECKOUT
+# Registration is intentionally fail-closed: a verified paid Stripe Checkout
+# session is required before a customer account can be created.
+# ============================================================
+
+PLANS = {
+    "personal": {
+        "name": "PostGuard Personal",
+        "price": "£49",
+        "price_env": "POSTGUARD_STRIPE_PRICE_PERSONAL",
+        "strap": "Pre-post protection for your everyday social media activity.",
+        "features": [
+            "Unlimited pre-post scanning for every post you submit to PostGuard before publishing",
+            "Privacy and personal-security risk analysis for each submitted post",
+            "Clear advice and recommendations before you decide whether to publish",
+            "Safer-post creation, re-scan, scan history and alerts",
+        ],
+    },
+    "executive": {
+        "name": "PostGuard Executive",
+        "price": "£199",
+        "price_env": "POSTGUARD_STRIPE_PRICE_EXECUTIVE",
+        "strap": "Enhanced protection package.",
+        "features": [
+            "Features to be confirmed",
+        ],
+    },
+    "vip": {
+        "name": "PostGuard VIP",
+        "price": "£499",
+        "price_env": "POSTGUARD_STRIPE_PRICE_VIP",
+        "strap": "Premium protection package.",
+        "features": [
+            "Features to be confirmed",
+        ],
+    },
+}
+
+
+def stripe_configured():
+    if not os.getenv("POSTGUARD_STRIPE_SECRET_KEY", "").strip():
+        return False
+    return all(os.getenv(plan["price_env"], "").strip() for plan in PLANS.values())
+
+
+def stripe_api(method, path, form_data=None):
+    secret = os.getenv("POSTGUARD_STRIPE_SECRET_KEY", "").strip()
+    if not secret:
+        raise RuntimeError("Stripe is not configured")
+
+    data = None
+    if form_data is not None:
+        data = urlencode(form_data).encode("utf-8")
+
+    req = Request(
+        "https://api.stripe.com" + path,
+        data=data,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {secret}",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": "PostGuard/7.6",
+        },
+    )
+    try:
+        with urlopen(req, timeout=20) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        try:
+            detail = exc.read().decode("utf-8", errors="replace")[:1200]
+        except Exception:
+            detail = ""
+        app.logger.error("Stripe API HTTP error %s: %s", exc.code, detail)
+        raise
+
+
+def create_checkout_session(plan_key):
+    plan = PLANS[plan_key]
+    public_url = os.getenv("POSTGUARD_PUBLIC_URL", "").strip().rstrip("/")
+    price_id = os.getenv(plan["price_env"], "").strip()
+    if not public_url.startswith("https://") or not price_id:
+        raise RuntimeError("PostGuard payment configuration is incomplete")
+
+    return stripe_api("POST", "/v1/checkout/sessions", {
+        "mode": "subscription",
+        "line_items[0][price]": price_id,
+        "line_items[0][quantity]": "1",
+        "success_url": public_url + "/payment/success?session_id={CHECKOUT_SESSION_ID}",
+        "cancel_url": public_url + "/join?cancelled=1",
+        "billing_address_collection": "auto",
+        "allow_promotion_codes": "true",
+        "metadata[postguard_plan]": plan_key,
+        "subscription_data[metadata][postguard_plan]": plan_key,
+    })
+
+
+PAID_SPLASH_PAGE = r"""
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Join PostGuard · Choose your protection</title>
+<style>
+:root{color-scheme:dark;--bg:#07101d;--card:#0f1c2e;--line:#263c5c;--text:#f7f9fd;--muted:#9badc6;--blue:#8db3ff;--green:#8de6b7}
+*{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at 15% 10%,rgba(66,113,205,.18),transparent 28%),#07101d;color:var(--text);font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{min-height:100vh;max-width:1220px;margin:auto;padding:44px 24px 64px}.top{display:flex;align-items:center;justify-content:space-between;gap:24px}.brand{display:flex;align-items:center;gap:14px;font-weight:900;letter-spacing:.04em}.brand img{width:62px;height:62px;object-fit:cover;border-radius:50%;border:1px solid #355987}.login{color:#dce7fb;text-decoration:none;border:1px solid #345071;padding:10px 16px;border-radius:10px}.hero{text-align:center;max-width:780px;margin:54px auto 38px}.hero img{width:160px;height:160px;object-fit:cover;border-radius:50%;border:1px solid #355987;box-shadow:0 20px 60px rgba(0,0,0,.35)}.eyebrow{margin-top:20px;color:var(--blue);font-size:.78rem;font-weight:850;text-transform:uppercase;letter-spacing:.16em}h1{font-size:clamp(2.4rem,5vw,4.6rem);line-height:1;margin:13px 0 18px;letter-spacing:-.05em}.hero p{color:#b7c5d8;line-height:1.7;font-size:1.05rem}.notice{max-width:760px;margin:0 auto 28px;padding:13px 16px;border:1px solid #40536e;background:#101b2b;border-radius:12px;color:#c9d5e6;text-align:center}.cancel{border-color:#70444b;background:#281a20;color:#ffd7da}.plans{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}.plan{position:relative;background:linear-gradient(180deg,#122137,#0c1727);border:1px solid var(--line);border-radius:20px;padding:26px;box-shadow:0 18px 50px rgba(0,0,0,.2)}.plan.featured{border-color:#6a91d3;transform:translateY(-6px)}.tag{position:absolute;top:16px;right:16px;background:#1d3b67;color:#cfe0ff;padding:6px 9px;border-radius:999px;font-size:.7rem;font-weight:800}.plan h2{margin:0 0 8px;font-size:1.35rem}.strap{color:var(--muted);min-height:44px;font-size:.9rem;line-height:1.5}.price{font-size:2.45rem;font-weight:900;margin:18px 0 2px;letter-spacing:-.04em}.per{color:var(--muted);font-size:.85rem}.features{list-style:none;padding:0;margin:22px 0}.features li{padding:8px 0;color:#c9d5e5;font-size:.88rem}.features li:before{content:"✓";color:var(--green);font-weight:900;margin-right:9px}.buy{width:100%;border:0;border-radius:11px;padding:13px 15px;font-weight:900;background:linear-gradient(135deg,#eef4ff,#b9d0fb);color:#07101d;cursor:pointer}.buy:disabled{opacity:.5;cursor:not-allowed}.small{margin:26px auto 0;max-width:830px;text-align:center;color:#778ba6;font-size:.78rem;line-height:1.6}.small a{color:#a9c8ff}.flash{max-width:760px;margin:0 auto 20px;border:1px solid #6b464d;background:#2a1b21;color:#ffd9dc;border-radius:12px;padding:12px 14px;text-align:center}@media(max-width:900px){.plans{grid-template-columns:1fr}.plan.featured{transform:none}.top{align-items:flex-start}.hero{margin-top:38px}}
+</style>
+</head>
+<body><div class="wrap">
+<div class="top"><div class="brand"><img src="{{ url_for('static', filename='postguard_logo.jpg') }}" alt="PostGuard logo"><span>POSTGUARD</span></div><a class="login" href="{{ url_for('login') }}">Existing user sign in</a></div>
+<div class="hero"><img src="{{ url_for('static', filename='postguard_logo.jpg') }}" alt="PostGuard"><div class="eyebrow">Protect what you post</div><h1>Choose your level of protection.</h1><p>PostGuard registration is available after a successful subscription payment. Select a plan, complete secure checkout, then create your account using the email address used at checkout.</p></div>
+{% with messages = get_flashed_messages() %}{% if messages %}<div class="flash">{{ messages[-1] }}</div>{% endif %}{% endwith %}
+{% if request.args.get('cancelled') %}<div class="notice cancel">Payment was cancelled. No PostGuard account has been created.</div>{% endif %}
+{% if not payments_ready %}<div class="notice">Secure payments are currently being configured. Registration remains locked until payment processing is available.</div>{% endif %}
+<div class="plans">
+{% for key, plan in plans.items() %}
+<div class="plan {% if key == 'executive' %}featured{% endif %}">{% if key == 'executive' %}<div class="tag">POPULAR</div>{% endif %}<h2>{{ plan.name }}</h2><div class="strap">{{ plan.strap }}</div><div class="price">{{ plan.price }}</div><div class="per">per month · recurring subscription</div><ul class="features">{% for item in plan.features %}<li>{{ item }}</li>{% endfor %}</ul><form method="post" action="{{ url_for('start_checkout', plan_key=key) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="buy" {% if not payments_ready %}disabled{% endif %}>Choose {{ plan.name }}</button></form></div>
+{% endfor %}
+</div>
+<div class="small">PostGuard provides security and privacy decision support. The final decision to publish content remains with the user. Prices are monthly recurring subscriptions. See the <a href="{{ url_for('terms') }}">Terms</a> and <a href="{{ url_for('privacy') }}">Privacy Notice</a>.</div>
+</div></body></html>
+"""
+
+
+@app.get("/join")
+def join_postguard():
+    if "uid" in session:
+        return redirect(url_for("home"))
+    return render_template_string(PAID_SPLASH_PAGE, plans=PLANS, payments_ready=stripe_configured())
+
+
+@app.post("/subscribe/<plan_key>")
+@limiter.limit("10 per minute")
+def start_checkout(plan_key):
+    if plan_key not in PLANS:
+        abort(404)
+    if "uid" in session:
+        return redirect(url_for("home"))
+    if not stripe_configured():
+        flash("Secure payment processing is not configured yet.")
+        return redirect(url_for("join_postguard"))
+    try:
+        checkout = create_checkout_session(plan_key)
+        checkout_url = checkout.get("url")
+        if not checkout_url:
+            raise RuntimeError("Stripe did not return a checkout URL")
+        return redirect(checkout_url)
+    except Exception:
+        app.logger.exception("Unable to create Stripe Checkout session")
+        flash("We could not start secure checkout. Please try again shortly.")
+        return redirect(url_for("join_postguard"))
+
+
+@app.get("/payment/success")
+@limiter.limit("20 per minute")
+def payment_success():
+    checkout_session_id = request.args.get("session_id", "").strip()
+    if not checkout_session_id.startswith("cs_"):
+        flash("Payment confirmation could not be verified.")
+        return redirect(url_for("join_postguard"))
+    try:
+        checkout = stripe_api("GET", "/v1/checkout/sessions/" + quote(checkout_session_id, safe=""))
+    except Exception:
+        flash("We could not verify your payment. Please contact PostGuard if you were charged.")
+        return redirect(url_for("join_postguard"))
+
+    plan_key = ((checkout.get("metadata") or {}).get("postguard_plan") or "").strip()
+    email = (((checkout.get("customer_details") or {}).get("email")) or checkout.get("customer_email") or "").strip().lower()
+    payment_status = (checkout.get("payment_status") or "").strip().lower()
+    status = (checkout.get("status") or "").strip().lower()
+    mode = (checkout.get("mode") or "").strip().lower()
+
+    if plan_key not in PLANS or not email or status != "complete" or mode != "subscription" or payment_status not in ("paid", "no_payment_required"):
+        flash("Your subscription has not been confirmed as paid yet. Registration remains locked.")
+        return redirect(url_for("join_postguard"))
+
+    c = db()
+    existing = c.execute("SELECT * FROM paid_checkouts WHERE checkout_session_id=?", (checkout_session_id,)).fetchone()
+    if existing and existing["consumed_at"]:
+        c.close()
+        flash("This paid checkout has already been used to create an account.")
+        return redirect(url_for("login"))
+    if not existing:
+        try:
+            c.execute(
+                """INSERT INTO paid_checkouts(checkout_session_id,email,plan,stripe_customer_id,stripe_subscription_id,payment_status,created_at) VALUES(?,?,?,?,?,?,?)""",
+                (checkout_session_id, email, plan_key, checkout.get("customer"), checkout.get("subscription"), payment_status, now()),
+            )
+            c.commit()
+        except (psycopg.errors.UniqueViolation, sqlite3.IntegrityError):
+            c.rollback()
+    c.close()
+
+    session["paid_checkout_session_id"] = checkout_session_id
+    session["paid_checkout_email"] = email
+    session["paid_plan"] = plan_key
+    session["paid_checkout_at"] = int(time.time())
+    return redirect(url_for("register"))
+
+
 AUTH_ENTRY_PAGE = """
 <!doctype html>
 <html lang="en">
@@ -1211,6 +1436,7 @@ input::placeholder{color:#61748f}
                 {% if mode == 'register' %}
                     <h2>Create your PostGuard account</h2>
                     <p>Set up secure access to your private PostGuard workspace.</p>
+                    {% if paid_plan %}<p style="margin-top:9px;color:#7fe0ae;font-weight:800">{{ paid_plan.name }} · {{ paid_plan.price }}/month — payment confirmed</p>{% endif %}
                 {% else %}
                     <h2>Welcome back</h2>
                     <p>Sign in to your PostGuard intelligence centre.</p>
@@ -1219,7 +1445,7 @@ input::placeholder{color:#61748f}
 
             <nav class="switch" aria-label="Account access">
                 <a href="{{ url_for('login') }}" class="{% if mode == 'login' %}active{% endif %}">Returning user</a>
-                <a href="{{ url_for('register') }}" class="{% if mode == 'register' %}active{% endif %}">New user</a>
+                <a href="{{ url_for('join_postguard') }}" class="{% if mode == 'register' %}active{% endif %}">New user</a>
             </nav>
 
             {% with messages = get_flashed_messages() %}
@@ -1237,7 +1463,7 @@ input::placeholder{color:#61748f}
                 <div class="field">
                     <label for="email">Email address</label>
                     <input id="email" name="email" type="email" autocomplete="email"
-                           placeholder="you@example.com" required>
+                           value="{{ paid_email|default('') }}" placeholder="you@example.com" {% if mode == 'register' %}readonly{% endif %} required>
                 </div>
 
                 <div class="field">
@@ -1291,7 +1517,7 @@ input::placeholder{color:#61748f}
                 <button class="primary" type="submit">Sign in securely</button>
                 <div class="note">
                     New to PostGuard?
-                    <a class="mini-link" href="{{ url_for('register') }}">Create an account</a>.
+                    <a class="mini-link" href="{{ url_for('join_postguard') }}">Create an account</a>.
                     Administrators use this same secure sign-in.
                     <br><a class="mini-link" href="{{ url_for('forgot_password') }}">Forgot your password?</a>
                     · <a class="mini-link" href="{{ url_for('privacy_page') }}">Privacy</a>
@@ -1376,14 +1602,38 @@ def register():
     if "uid" in session:
         return redirect(url_for("home"))
 
+    paid_checkout_session_id = session.get("paid_checkout_session_id", "")
+    paid_checkout_email = session.get("paid_checkout_email", "")
+    paid_plan = session.get("paid_plan", "")
+    paid_checkout_at = int(session.get("paid_checkout_at", 0) or 0)
+    if (not paid_checkout_session_id or not paid_checkout_email or paid_plan not in PLANS
+            or not paid_checkout_at or time.time() - paid_checkout_at > 3600):
+        session.pop("paid_checkout_session_id", None)
+        session.pop("paid_checkout_email", None)
+        session.pop("paid_plan", None)
+        session.pop("paid_checkout_at", None)
+        flash("Choose a PostGuard plan and complete payment before registering.")
+        return redirect(url_for("join_postguard"))
+
+    c_paid = db()
+    paid_row = c_paid.execute(
+        "SELECT * FROM paid_checkouts WHERE checkout_session_id=?",
+        (paid_checkout_session_id,),
+    ).fetchone()
+    c_paid.close()
+    if (not paid_row or paid_row["consumed_at"] or paid_row["email"].strip().lower() != paid_checkout_email.strip().lower()
+            or paid_row["plan"] != paid_plan or paid_row["payment_status"] not in ("paid", "no_payment_required")):
+        flash("A valid unused paid checkout is required before registration.")
+        return redirect(url_for("join_postguard"))
+
     if request.method == "POST":
-        email = request.form.get("email", "").strip().lower()
+        email = paid_checkout_email.strip().lower()
         password = request.form.get("password", "")
         confirm = request.form.get("confirm", "")
 
         if not email:
             flash("Email address is required.")
-            return render_template_string(AUTH_ENTRY_PAGE, mode="register")
+            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan])
 
         email_pattern = (
             r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+"
@@ -1393,19 +1643,19 @@ def register():
 
         if not re.match(email_pattern, email):
             flash("Enter a valid email address.")
-            return render_template_string(AUTH_ENTRY_PAGE, mode="register")
+            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan])
 
         if not password:
             flash("Password is required.")
-            return render_template_string(AUTH_ENTRY_PAGE, mode="register")
+            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan])
 
         if password != confirm:
             flash("Passwords do not match.")
-            return render_template_string(AUTH_ENTRY_PAGE, mode="register")
+            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan])
 
         if len(password) < 12:
             flash("Password must be at least 12 characters.")
-            return render_template_string(AUTH_ENTRY_PAGE, mode="register")
+            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan])
 
         c = db()
         existing = c.execute(
@@ -1416,13 +1666,17 @@ def register():
         if existing:
             c.close()
             flash("An account with that email already exists.")
-            return render_template_string(AUTH_ENTRY_PAGE, mode="register")
+            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan])
 
         try:
             user = c.execute(
                 """
-                INSERT INTO users(email, password, role, created_at, email_verified)
-                VALUES(?,?,?,?,?)
+                INSERT INTO users(
+                    email, password, role, created_at, email_verified,
+                    subscription_plan, subscription_status, stripe_customer_id,
+                    stripe_subscription_id, stripe_checkout_session_id
+                )
+                VALUES(?,?,?,?,?,?,?,?,?,?)
                 RETURNING id
                 """,
                 (
@@ -1431,6 +1685,11 @@ def register():
                     "user",
                     now(),
                     0,
+                    paid_plan,
+                    "active",
+                    paid_row["stripe_customer_id"],
+                    paid_row["stripe_subscription_id"],
+                    paid_checkout_session_id,
                 ),
             ).fetchone()
         except (psycopg.errors.UniqueViolation, sqlite3.IntegrityError):
@@ -1440,7 +1699,7 @@ def register():
             c.rollback()
             c.close()
             flash("An account with that email already exists.")
-            return render_template_string(AUTH_ENTRY_PAGE, mode="register")
+            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan])
 
         user_id = user["id"]
 
@@ -1467,6 +1726,10 @@ def register():
                 now(),
             ),
         )
+        c.execute(
+            "UPDATE paid_checkouts SET consumed_at=?, user_id=? WHERE checkout_session_id=? AND consumed_at IS NULL",
+            (now(), user_id, paid_checkout_session_id),
+        )
 
         c.commit()
         c.close()
@@ -1475,6 +1738,25 @@ def register():
             "New PostGuard account registered: user_id=%s",
             user_id,
         )
+
+        plan_name = PLANS[paid_plan]["name"]
+        plan_price = PLANS[paid_plan]["price"]
+        admin_email = os.getenv("POSTGUARD_ADMIN_EMAIL", "").strip().lower()
+        try:
+            send_email(
+                email,
+                f"Welcome to PostGuard — {plan_name}",
+                (
+                    f"Welcome to PostGuard.\n\n"
+                    f"Your {plan_name} subscription ({plan_price}/month) has been linked to your new account.\n"
+                    "Please complete the separate email-verification message before signing in.\n\n"
+                    "PostGuard provides security and privacy decision support. The final decision to publish content remains with you.\n\n"
+                    "PostGuard\nwww.postguard.uk"
+                ),
+                cc_addresses=[admin_email] if admin_email and admin_email != email else [],
+            )
+        except Exception:
+            app.logger.exception("Welcome email delivery failed for user_id=%s", user_id)
 
         try:
             sent = send_verification_email(user_id, email)
@@ -1492,9 +1774,18 @@ def register():
                 "Your account was created, but email delivery is not configured. "
                 "Please contact the PostGuard administrator."
             )
+        session.pop("paid_checkout_session_id", None)
+        session.pop("paid_checkout_email", None)
+        session.pop("paid_plan", None)
+        session.pop("paid_checkout_at", None)
         return redirect(url_for("login"))
 
-    return render_template_string(AUTH_ENTRY_PAGE, mode="register")
+    return render_template_string(
+        AUTH_ENTRY_PAGE,
+        mode="register",
+        paid_email=paid_checkout_email,
+        paid_plan=PLANS[paid_plan],
+    )
 
 
 # ============================================================
@@ -5417,7 +5708,7 @@ def terms_page():
     <p>Nothing in these Terms excludes or limits liability that cannot lawfully be excluded or limited, or affects applicable consumer statutory rights, including rights concerning services supplied with reasonable care and skill.</p>
 
     <h2>11. Plans, prices and payment</h2>
-    <table><tr><th>Plan</th><th>Monthly price</th></tr><tr><td>PostGuard Personal</td><td>£49/month</td></tr><tr><td>PostGuard Executive</td><td>£199/month</td></tr><tr><td>PostGuard VIP</td><td>£400/month</td></tr></table>
+    <table><tr><th>Plan</th><th>Monthly price</th></tr><tr><td>PostGuard Personal</td><td>£49/month</td></tr><tr><td>PostGuard Executive</td><td>£199/month</td></tr><tr><td>PostGuard VIP</td><td>£499/month</td></tr></table>
     <p>The features included in each plan are those clearly displayed at the point of purchase. Before a paid subscription is created, PostGuard will display the price, billing period and applicable renewal and cancellation information. Recurring subscriptions may automatically renew where this is clearly disclosed and agreed. PostGuard will not introduce hidden charges. Material price changes affecting an existing subscription will be communicated in advance where required. Applicable UK consumer cancellation, refund and cooling-off rights will be respected. Cancelling a paid subscription and deleting a PostGuard account are separate actions.</p>
 
     <h2>12. Governing law and disputes</h2>
