@@ -2328,8 +2328,13 @@ def verify_email(token):
     c.commit()
     c.close()
     security_event("email_verified", True, row["user_id"])
-    flash("Email verified. You can now sign in.")
-    return redirect(url_for("login"))
+
+    # End any stale pre-verification browser session so the customer cannot
+    # be bounced back to the verification notice after clicking the email link.
+    session.clear()
+    session.permanent = True
+    flash("Email verified successfully. Sign in to start your 7-day PostGuard demo.")
+    return redirect(url_for("login", verified="1"), code=303)
 
 
 @app.get("/verify-email")
