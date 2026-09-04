@@ -2648,8 +2648,11 @@ tr:last-child td{border-bottom:0}
 
 
 @app.get("/")
-@auth
 def home():
+    # Public visitors see pricing first. Existing authenticated users keep their dashboard.
+    if "uid" not in session:
+        return render_template_string(PAID_SPLASH_PAGE, plans=PLANS, payments_ready=stripe_configured())
+
     c = db()
 
     is_admin = session.get("role") == "admin"
