@@ -3284,6 +3284,7 @@ tr:last-child td{border-bottom:0}
     <nav class="nav">
         <a class="active" href="{{ url_for('home') }}">Dashboard</a>
         <a href="{{ url_for('check_post') }}">Check a Post</a>
+        <a href="{{ url_for('scan_history') }}">Scan History</a>
         <a href="{{ url_for('home') }}#active-alerts">Alerts</a>
         <a href="{{ url_for('home') }}#recent-cases">Cases</a>
         <a href="{{ url_for('customer_cases_list') }}">My Cases</a>
@@ -3806,6 +3807,7 @@ textarea.field{min-height:180px;resize:vertical}
     <nav class="nav">
         <a href="{{ url_for('home') }}">Dashboard</a>
         <a class="active" href="{{ url_for('check_post') }}">Check a Post</a>
+        <a href="{{ url_for('scan_history') }}">Scan History</a>
         <a href="{{ url_for('account') }}">My Account</a>
         <form method="post" action="{{ url_for('logout') }}" style="margin:8px 0 0">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -4469,6 +4471,7 @@ a{color:inherit}.main{max-width:1000px;margin:auto;padding:30px 20px}
 </section>
 
 <div style="display:flex;gap:10px;flex-wrap:wrap">
+    <a class="btn" href="{{ url_for('scan_history') }}">Scan History</a>
     <a class="btn" href="{{ url_for('check_post') }}">Check another post</a>
     <a class="btn" href="{{ url_for('customer_cases_list') }}">My Cases</a>
         <a class="btn" href="{{ url_for('home') }}">Dashboard</a>
@@ -4477,6 +4480,106 @@ a{color:inherit}.main{max-width:1000px;margin:auto;padding:30px 20px}
 </body>
 </html>
 """
+
+
+
+SCAN_HISTORY_PAGE = """
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PostGuard · Scan History</title>
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#09101d;color:#f5f7fb}
+a{color:inherit}
+.main{max-width:1100px;margin:auto;padding:30px 20px}
+.top{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:22px}
+.card{background:#111a2b;border:1px solid #22304a;border-radius:16px;overflow:hidden}
+table{width:100%;border-collapse:collapse}
+th,td{padding:14px 16px;text-align:left;border-bottom:1px solid #22304a;vertical-align:top}
+th{font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;color:#9eabc1}
+tr:last-child td{border-bottom:0}
+.muted{color:#9eabc1}
+.badge{display:inline-block;padding:5px 9px;border-radius:999px;border:1px solid #40516f;font-size:.78rem;font-weight:800}
+.btn{display:inline-block;text-decoration:none;background:#1b2b47;border:1px solid #40516f;padding:9px 12px;border-radius:10px;font-weight:750}
+.empty{padding:30px;text-align:center}
+.caption{max-width:420px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:760px){
+ table,thead,tbody,tr,th,td{display:block}
+ thead{display:none}
+ tr{padding:12px;border-bottom:1px solid #22304a}
+ td{border:0;padding:6px 10px}
+ .caption{max-width:100%}
+}
+</style>
+</head>
+<body>
+<main class="main">
+<div class="top">
+  <div>
+    <h1 style="margin:0">Scan History</h1>
+    <div class="muted" style="margin-top:5px">Your previous PostGuard checks and OSINT reports.</div>
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <a class="btn" href="{{ url_for('check_post') }}">Check a Post</a>
+    <a class="btn" href="{{ url_for('home') }}">Dashboard</a>
+  </div>
+</div>
+
+<div class="card">
+{% if checks %}
+<table>
+<thead><tr><th>Date</th><th>Risk</th><th>Score</th><th>Caption</th><th></th></tr></thead>
+<tbody>
+{% for check in checks %}
+<tr>
+  <td>{{ check['created_at'] or '—' }}</td>
+  <td><span class="badge">{{ check['risk'] or '—' }}</span></td>
+  <td>{{ check['score'] if check['score'] is not none else '—' }}</td>
+  <td class="caption">{{ check['caption'] or 'No caption recorded' }}</td>
+  <td><a class="btn" href="{{ url_for('scan_history_detail', check_id=check['id']) }}">View report</a></td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<div class="empty">
+  <h3 style="margin-top:0">No scans yet</h3>
+  <div class="muted">Run a PostGuard check and it will appear here.</div>
+  <div style="margin-top:16px"><a class="btn" href="{{ url_for('check_post') }}">Run first scan</a></div>
+</div>
+{% endif %}
+</div>
+</main>
+</body>
+</html>
+"""
+
+
+@app.get("/scan-history")
+@auth
+def scan_history():
+    c = db()
+    try:
+        if session.get("role") == "admin":
+            checks = c.execute(
+                "SELECT * FROM checks ORDER BY id DESC LIMIT 250"
+            ).fetchall()
+        else:
+            checks = c.execute(
+                "SELECT * FROM checks WHERE user_id=? ORDER BY id DESC LIMIT 250",
+                (session["uid"],),
+            ).fetchall()
+    finally:
+        c.close()
+
+    return render_template_string(
+        SCAN_HISTORY_PAGE,
+        checks=checks,
+    )
 
 
 @app.get("/scan-history/<int:check_id>")
