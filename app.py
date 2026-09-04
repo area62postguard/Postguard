@@ -573,7 +573,7 @@ def send_email(to_address, subject, text_body, cc_addresses=None):
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
-            "User-Agent": "PostGuard/7.6.5",
+            "User-Agent": "PostGuard/7.7.5",
         },
     )
 
@@ -1091,7 +1091,7 @@ def risk(score):
 PLANS = {
     "personal": {
         "name": "PostGuard Personal",
-        "price": "£49",
+        "price": "£20",
         "price_env": "POSTGUARD_STRIPE_PRICE_PERSONAL",
         "strap": "Pre-post protection for your everyday social media activity.",
         "features": [
@@ -1103,7 +1103,7 @@ PLANS = {
     },
     "executive": {
         "name": "PostGuard Executive",
-        "price": "£199",
+        "price": "£100",
         "price_env": "POSTGUARD_STRIPE_PRICE_EXECUTIVE",
         "strap": "Enhanced protection package.",
         "features": [
@@ -1112,7 +1112,7 @@ PLANS = {
     },
     "vip": {
         "name": "PostGuard VIP",
-        "price": "£499",
+        "price": "£250",
         "price_env": "POSTGUARD_STRIPE_PRICE_VIP",
         "strap": "Premium protection package.",
         "features": [
@@ -1144,7 +1144,7 @@ def stripe_api(method, path, form_data=None):
         headers={
             "Authorization": f"Bearer {secret}",
             "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": "PostGuard/7.6",
+            "User-Agent": "PostGuard/7.7",
         },
     )
     try:
@@ -1174,7 +1174,9 @@ def create_checkout_session(plan_key):
         "cancel_url": public_url + "/join?cancelled=1",
         "billing_address_collection": "auto",
         "allow_promotion_codes": "true",
+        "payment_method_collection": "always",
         "metadata[postguard_plan]": plan_key,
+        "subscription_data[trial_period_days]": "7",
         "subscription_data[metadata][postguard_plan]": plan_key,
     })
 
@@ -1194,17 +1196,17 @@ PAID_SPLASH_PAGE = r"""
 </head>
 <body><div class="wrap">
 <div class="top"><div class="brand"><img src="{{ url_for('static', filename='postguard_logo.jpg') }}" alt="PostGuard logo"><span>POSTGUARD</span></div><a class="login" href="{{ url_for('login') }}">Existing user sign in</a></div>
-<div class="hero"><img src="{{ url_for('static', filename='postguard_logo.jpg') }}" alt="PostGuard"><div class="eyebrow">Protect what you post</div><h1>Choose your level of protection.</h1><p>Try PostGuard free for 7 days with no payment required, or choose a paid monthly plan. Demo users receive the same secure account setup and email verification before access.</p></div>
+<div class="hero"><img src="{{ url_for('static', filename='postguard_logo.jpg') }}" alt="PostGuard"><div class="eyebrow">Protect what you post</div><h1>Choose your level of protection.</h1><p>Choose a plan and start with a 7-day free trial. A payment method is required. Unless you cancel before the trial ends, your selected monthly subscription starts automatically and continues each month until cancelled.</p></div>
 {% with messages = get_flashed_messages() %}{% if messages %}<div class="flash">{{ messages[-1] }}</div>{% endif %}{% endwith %}
 {% if request.args.get('cancelled') %}<div class="notice cancel">Payment was cancelled. No PostGuard account has been created.</div>{% endif %}
-{% if not payments_ready %}<div class="notice">Secure payments are currently being configured. The 7-day free demo remains available.</div>{% endif %}
-<div class="demo"><h2>7-Day Free Demo</h2><div class="free">£0 for 7 days</div><p>Test PostGuard before purchasing. No payment is required to start the demo. One demo per email address. After 7 days, choose a paid plan to continue using the service.</p><form method="post" action="{{ url_for('start_demo') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="buy">Start free 7-day demo</button></form></div>
+{% if not payments_ready %}<div class="notice">Secure subscription signup is currently being configured.</div>{% endif %}
+<div class="notice"><strong>7 days free on every plan.</strong> Payment method required. Cancel before your 7-day trial ends to avoid being charged. If you do not cancel, your selected plan renews automatically every month until cancelled.</div>
 <div class="plans">
 {% for key, plan in plans.items() %}
-<div class="plan {% if key == 'executive' %}featured{% endif %}">{% if key == 'executive' %}<div class="tag">POPULAR</div>{% endif %}<h2>{{ plan.name }}</h2><div class="strap">{{ plan.strap }}</div><div class="price">{{ plan.price }}</div><div class="per">per month · recurring subscription</div><ul class="features">{% for item in plan.features %}<li>{{ item }}</li>{% endfor %}</ul><form method="post" action="{{ url_for('start_checkout', plan_key=key) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="buy" {% if not payments_ready %}disabled{% endif %}>Choose {{ plan.name }}</button></form></div>
+<div class="plan {% if key == 'executive' %}featured{% endif %}">{% if key == 'executive' %}<div class="tag">POPULAR</div>{% endif %}<h2>{{ plan.name }}</h2><div class="strap">{{ plan.strap }}</div><div class="price">7 days free</div><div class="per">then {{ plan.price }}/month · recurring subscription</div><ul class="features">{% for item in plan.features %}<li>{{ item }}</li>{% endfor %}</ul><form method="post" action="{{ url_for('start_checkout', plan_key=key) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="buy" {% if not payments_ready %}disabled{% endif %}>Start 7-day free trial</button></form></div>
 {% endfor %}
 </div>
-<div class="small">PostGuard provides security and privacy decision support. The final decision to publish content remains with the user. Prices are monthly recurring subscriptions. See the <a href="{{ url_for('terms_page') }}">Terms</a> and <a href="{{ url_for('privacy_page') }}">Privacy Notice</a>.</div>
+<div class="small">PostGuard provides security and privacy decision support. The final decision to publish content remains with the user. A payment method is required for the 7-day free trial. Unless cancelled before the trial ends, the selected plan is charged at the displayed monthly price and renews automatically each month until cancelled. See the <a href="{{ url_for('terms_page') }}">Terms</a> and <a href="{{ url_for('privacy_page') }}">Privacy Notice</a>.</div>
 </div></body></html>
 """
 
@@ -1270,6 +1272,18 @@ def payment_success():
     payment_status = (checkout.get("payment_status") or "").strip().lower()
     status = (checkout.get("status") or "").strip().lower()
     mode = (checkout.get("mode") or "").strip().lower()
+    subscription_id = (checkout.get("subscription") or "").strip()
+    trial_ends_at = None
+    stripe_subscription_status = "trialing"
+    if subscription_id.startswith("sub_"):
+        try:
+            subscription = stripe_api("GET", "/v1/subscriptions/" + quote(subscription_id, safe=""))
+            stripe_subscription_status = (subscription.get("status") or "trialing").strip().lower()
+            trial_end_epoch = subscription.get("trial_end")
+            if trial_end_epoch:
+                trial_ends_at = datetime.fromtimestamp(int(trial_end_epoch), tz=timezone.utc).isoformat()
+        except Exception:
+            app.logger.exception("Unable to retrieve Stripe subscription trial details")
 
     if plan_key not in PLANS or not email or status != "complete" or mode != "subscription" or payment_status not in ("paid", "no_payment_required"):
         flash("Your subscription has not been confirmed as paid yet. Registration remains locked.")
@@ -1297,12 +1311,12 @@ def payment_success():
                 c.execute("UPDATE paid_checkouts SET consumed_at=?, user_id=? WHERE checkout_session_id=?", (now(), existing_user["id"], checkout_session_id))
 
             c.execute(
-                """UPDATE users SET subscription_plan=?, subscription_status='active', stripe_customer_id=?, stripe_subscription_id=?, stripe_checkout_session_id=?, trial_ends_at=NULL WHERE id=?""",
-                (plan_key, checkout.get("customer"), checkout.get("subscription"), checkout_session_id, existing_user["id"]),
+                """UPDATE users SET subscription_plan=?, subscription_status=?, stripe_customer_id=?, stripe_subscription_id=?, stripe_checkout_session_id=?, trial_ends_at=? WHERE id=?""",
+                (plan_key, stripe_subscription_status, checkout.get("customer"), checkout.get("subscription"), checkout_session_id, trial_ends_at, existing_user["id"]),
             )
             c.commit()
             c.close()
-            flash("Payment confirmed. Your PostGuard account has been upgraded. Sign in to continue.")
+            flash("Your 7-day trial is active. Sign in to continue. Cancel before the trial ends to avoid the first monthly charge.")
             return redirect(url_for("login"))
         except (psycopg.errors.UniqueViolation, sqlite3.IntegrityError):
             c.rollback()
@@ -1329,6 +1343,8 @@ def payment_success():
     session["paid_checkout_session_id"] = checkout_session_id
     session["paid_checkout_email"] = email
     session["paid_plan"] = plan_key
+    session["paid_trial_ends_at"] = trial_ends_at
+    session["paid_subscription_status"] = stripe_subscription_status
     session["paid_checkout_at"] = int(time.time())
     return redirect(url_for("register"))
 
@@ -1512,7 +1528,7 @@ input::placeholder{color:#61748f}
                 {% if mode == 'register' %}
                     <h2>Create your PostGuard account</h2>
                     <p>Set up secure access to your private PostGuard workspace.</p>
-                    {% if demo_mode %}<p style="margin-top:9px;color:#7fe0ae;font-weight:800">7-Day Free Demo · no payment required</p>{% elif paid_plan %}<p style="margin-top:9px;color:#7fe0ae;font-weight:800">{{ paid_plan.name }} · {{ paid_plan.price }}/month — payment confirmed</p>{% endif %}
+                    {% if demo_mode %}<p style="margin-top:9px;color:#7fe0ae;font-weight:800">7-Day Free Demo · no payment required</p>{% elif paid_plan %}<p style="margin-top:9px;color:#7fe0ae;font-weight:800">{{ paid_plan.name }} · 7 days free, then {{ paid_plan.price }}/month unless cancelled</p>{% endif %}
                 {% else %}
                     <h2>Welcome back</h2>
                     <p>Sign in to your PostGuard intelligence centre.</p>
@@ -1695,6 +1711,8 @@ def register():
         session.pop("paid_checkout_session_id", None)
         session.pop("paid_checkout_email", None)
         session.pop("paid_plan", None)
+        session.pop("paid_trial_ends_at", None)
+        session.pop("paid_subscription_status", None)
         session.pop("paid_checkout_at", None)
         session.pop("demo_registration", None)
         session.pop("demo_registration_at", None)
@@ -1781,11 +1799,11 @@ def register():
                     now(),
                     0,
                     paid_plan if paid_mode else "demo",
-                    "active" if paid_mode else "trialing",
+                    paid_subscription_status if paid_mode else "trialing",
                     paid_row["stripe_customer_id"] if paid_mode else None,
                     paid_row["stripe_subscription_id"] if paid_mode else None,
                     paid_checkout_session_id if paid_mode else None,
-                    None if paid_mode else (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+                    paid_trial_ends_at if paid_mode else (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
                 ),
             ).fetchone()
         except (psycopg.errors.UniqueViolation, sqlite3.IntegrityError):
@@ -1848,7 +1866,7 @@ def register():
         admin_email = os.getenv("POSTGUARD_ADMIN_EMAIL", "").strip().lower()
         try:
             if paid_mode:
-                welcome_detail = f"Your {plan_name} subscription ({plan_price}/month) has been linked to your new account.\n"
+                welcome_detail = f"Your 7-day free trial for {plan_name} is active. A payment method is on file. Unless you cancel before the trial ends, {plan_price}/month will be charged automatically and the subscription will continue monthly until cancelled. You can manage or cancel your subscription from My Account.\n"
             else:
                 welcome_detail = "Your 7-day free PostGuard demo has started. No payment has been taken. After 7 days, choose a paid plan to continue using the service.\n"
             send_email(
@@ -1885,6 +1903,8 @@ def register():
         session.pop("paid_checkout_session_id", None)
         session.pop("paid_checkout_email", None)
         session.pop("paid_plan", None)
+        session.pop("paid_trial_ends_at", None)
+        session.pop("paid_subscription_status", None)
         session.pop("paid_checkout_at", None)
         session.pop("demo_registration", None)
         session.pop("demo_registration_at", None)
@@ -5311,6 +5331,7 @@ main{width:min(760px,calc(100% - 32px));margin:40px auto}.card{background:#151c2
 {% with messages=get_flashed_messages() %}{% if messages %}{% for m in messages %}<div class="flash">{{ m }}</div>{% endfor %}{% endif %}{% endwith %}
 <div class="card"><h2>Account details</h2><p><strong>Email:</strong> {{ user["email"] }}</p><p><strong>Account type:</strong> {{ user["role"] or "user" }}</p><p><strong>Registered:</strong> {{ user["created_at"] or "—" }}</p>
 <p><a href="{{ url_for('privacy_page') }}">Privacy Notice</a> · <a href="{{ url_for('data_retention_page') }}">Data Retention</a> · <a href="{{ url_for('terms_page') }}">Terms of Service</a></p></div>
+{% if user["role"] != "admin" %}<div class="card"><h2>Subscription</h2><p><strong>Plan:</strong> {{ user["subscription_plan"] or "—" }}</p><p><strong>Status:</strong> {{ user["subscription_status"] or "—" }}</p>{% if user["trial_ends_at"] %}<p><strong>Trial ends:</strong> {{ user["trial_ends_at"] }}</p>{% endif %}<p class="muted">Your selected plan automatically renews monthly after the 7-day free trial unless you cancel before the trial ends.</p>{% if user["stripe_customer_id"] %}<form method="post" action="{{ url_for('billing_portal') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn" type="submit">Manage or cancel subscription</button></form>{% endif %}</div>{% endif %}
 <div class="card"><h2>Change password</h2>
 <form method="post" action="{{ url_for('account_change_password') }}">
 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -5344,11 +5365,77 @@ label{display:block;margin:16px 0 6px}input{width:100%;padding:12px;border-radiu
 <a class="btn" href="{{ url_for('account') }}">Cancel</a></form></div></body></html>
 """
 
+
+
+def stripe_webhook_secret():
+    return os.getenv("POSTGUARD_STRIPE_WEBHOOK_SECRET", "").strip()
+
+def verify_stripe_signature(payload, signature_header):
+    secret = stripe_webhook_secret()
+    if not secret or not signature_header:
+        return False
+    parts = {}
+    for item in signature_header.split(","):
+        if "=" in item:
+            k, v = item.split("=", 1)
+            parts.setdefault(k.strip(), []).append(v.strip())
+    try:
+        timestamp = int((parts.get("t") or [""])[0])
+    except ValueError:
+        return False
+    if abs(int(time.time()) - timestamp) > 300:
+        return False
+    signed = str(timestamp).encode() + b"." + payload
+    expected = hmac.new(secret.encode(), signed, hashlib.sha256).hexdigest()
+    return any(hmac.compare_digest(expected, candidate) for candidate in parts.get("v1", []))
+
+@app.post("/stripe/webhook")
+@csrf.exempt
+def stripe_webhook():
+    payload = request.get_data(cache=False)
+    if not verify_stripe_signature(payload, request.headers.get("Stripe-Signature", "")):
+        return "invalid signature", 400
+    try:
+        event = json.loads(payload.decode("utf-8"))
+    except Exception:
+        return "invalid payload", 400
+    event_type = event.get("type", "")
+    obj = ((event.get("data") or {}).get("object") or {})
+    if event_type.startswith("customer.subscription."):
+        sub_id = obj.get("id")
+        customer_id = obj.get("customer")
+        status = obj.get("status") or "unknown"
+        trial_end = obj.get("trial_end")
+        trial_iso = datetime.fromtimestamp(int(trial_end), tz=timezone.utc).isoformat() if trial_end else None
+        c = db()
+        c.execute("UPDATE users SET subscription_status=?, trial_ends_at=?, stripe_customer_id=COALESCE(stripe_customer_id,?) WHERE stripe_subscription_id=?", (status, trial_iso, customer_id, sub_id))
+        c.commit(); c.close()
+    return "ok", 200
+
+@app.post("/account/billing")
+@auth
+@limiter.limit("10 per minute")
+def billing_portal():
+    c=db(); user=c.execute("SELECT role,stripe_customer_id FROM users WHERE id=?",(session["uid"],)).fetchone(); c.close()
+    if not user or user["role"] == "admin" or not user["stripe_customer_id"]:
+        flash("No Stripe subscription is linked to this account.")
+        return redirect(url_for("account"))
+    public_url=os.getenv("POSTGUARD_PUBLIC_URL", "").strip().rstrip("/")
+    try:
+        portal=stripe_api("POST", "/v1/billing_portal/sessions", {"customer": user["stripe_customer_id"], "return_url": public_url + "/account"})
+        if not portal.get("url"):
+            raise RuntimeError("Stripe did not return a billing portal URL")
+        return redirect(portal["url"])
+    except Exception:
+        app.logger.exception("Unable to create Stripe billing portal session")
+        flash("Subscription management is temporarily unavailable. Please try again shortly.")
+        return redirect(url_for("account"))
+
 @app.get("/account")
 @auth
 def account():
     c=db()
-    user=c.execute("SELECT id,email,role,created_at FROM users WHERE id=?",(session["uid"],)).fetchone()
+    user=c.execute("SELECT id,email,role,created_at,subscription_plan,subscription_status,trial_ends_at,stripe_customer_id,stripe_subscription_id FROM users WHERE id=?",(session["uid"],)).fetchone()
     c.close()
     if not user:
         session.clear()
@@ -5844,7 +5931,8 @@ def terms_page():
     <p>Nothing in these Terms excludes or limits liability that cannot lawfully be excluded or limited, or affects applicable consumer statutory rights, including rights concerning services supplied with reasonable care and skill.</p>
 
     <h2>11. Plans, prices and payment</h2>
-    <table><tr><th>Plan</th><th>Monthly price</th></tr><tr><td>PostGuard Personal</td><td>£49/month</td></tr><tr><td>PostGuard Executive</td><td>£199/month</td></tr><tr><td>PostGuard VIP</td><td>£499/month</td></tr></table>
+    <table><tr><th>Plan</th><th>Monthly price</th></tr><tr><td>PostGuard Personal</td><td>£20/month</td></tr><tr><td>PostGuard Executive</td><td>£100/month</td></tr><tr><td>PostGuard VIP</td><td>£250/month</td></tr></table>
+    <p><strong>7-day free trial:</strong> A payment method is required. Unless you cancel before the 7-day trial ends, the selected monthly fee is charged automatically and the subscription continues to renew monthly until cancelled. You can manage or cancel your subscription through the account billing portal.</p>
     <p>The features included in each plan are those clearly displayed at the point of purchase. Before a paid subscription is created, PostGuard will display the price, billing period and applicable renewal and cancellation information. Recurring subscriptions may automatically renew where this is clearly disclosed and agreed. PostGuard will not introduce hidden charges. Material price changes affecting an existing subscription will be communicated in advance where required. Applicable UK consumer cancellation, refund and cooling-off rights will be respected. Cancelling a paid subscription and deleting a PostGuard account are separate actions.</p>
 
     <h2>12. Governing law and disputes</h2>
