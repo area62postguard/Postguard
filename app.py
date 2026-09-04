@@ -1274,6 +1274,7 @@ def google_vision_scan(path):
         "partial_matches": [],
         "similar_images": [],
         "page_intelligence": [],
+        "page_inspection_status": "not_run",
     }
 
     try:
@@ -1294,17 +1295,9 @@ def google_vision_scan(path):
         evidence["visible_text"] = visible_text[:4000]
 
         if visible_text:
-            _, text_findings = caption_scan(visible_text)
-            for item in text_findings:
-                item = dict(item)
-                item["category"] = "Visible text: " + item["category"]
-                item["detail"] = (
-                    "Observed readable text in the image may expose sensitive information. "
-                    + item["detail"]
-                )
-                findings.append(item)
-
-            # Extra OCR patterns that are especially useful for image privacy review.
+            # OCR is deliberately analysed with concrete identifier/context rules rather
+            # than reusing the caption rules. This reduces false positives from ordinary
+            # marketing/editorial text while retaining privacy-relevant detections.
             ocr_rules = [
                 (r"\b[A-Z]{1,2}\d{1,2}\s?\d[A-Z]{2}\b", "Possible UK postcode", "HIGH",
                  "Observed text resembles a UK postcode and could help identify a location.",
@@ -1312,16 +1305,20 @@ def google_vision_scan(path):
                 (r"\b(?:0|\+44)\s?7\d{3}[\s-]?\d{6}\b", "Possible mobile number", "HIGH",
                  "Observed text resembles a UK mobile number.",
                  "Blur or remove the phone number before publishing."),
-                (r"\b[A-Z]{2}\d{2}\s?[A-Z]{3}\b", "Possible vehicle registration", "HIGH",
+                (r"\b[A-Z]{2}\d{2}\s+[A-Z]{3}\b", "Possible vehicle registration", "HIGH",
                  "Observed text resembles a UK vehicle registration.",
                  "Blur the registration plate before publishing."),
                 (r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b", "Email address", "HIGH",
                  "Observed text appears to contain an email address.",
                  "Blur or remove the email address before publishing."),
-                (r"\b(passport|boarding pass|booking reference|school|academy|college|nursery|"
-                 r"gate code|alarm code|recovery code|sort code|account number|date of birth|dob)\b",
+                (r"\b(?:school|academy|nursery)\b.{0,80}\b(?:year|class|pupil|student|uniform|badge|primary|secondary)\b|"
+                 r"\b(?:year|class|pupil|student|uniform|badge|primary|secondary)\b.{0,80}\b(?:school|academy|nursery)\b",
+                 "School / child context", "HIGH",
+                 "Observed text contains a combination of school or child-context clues that may identify a child or education setting.",
+                 "Crop, blur or remove school names, badges, class/year details and other identifying child information."),
+                (r"\b(?:passport|boarding pass|booking reference|gate code|alarm code|recovery code|sort code|account number|date of birth|dob)\b",
                  "Sensitive visible text", "HIGH",
-                 "Observed text contains wording associated with personal, school, travel, access or financial information.",
+                 "Observed text contains wording associated with identity, travel, access or financial information.",
                  "Review and redact the sensitive text before publishing."),
             ]
             for pattern, category, severity, detail, recommendation in ocr_rules:
@@ -1445,9 +1442,20 @@ def google_vision_scan(path):
                 if _url:
                     _page_urls.append(str(_url))
             evidence["matching_pages"] = _page_urls[:10]
-            evidence["page_intelligence"] = _matched_page_intelligence(
-                evidence["matching_pages"],
-                evidence.get("visible_text", ""),
+
+            # Customer-ready default: do not make server-side requests to arbitrary
+            # URLs supplied by a third-party image-matching service. DNS can change
+            # between validation and connection (DNS rebinding / TOCTOU), so hostname
+            # pre-checks alone are not a sufficient production SSRF boundary.
+            #
+            # We still preserve Google's public-page URLs, full/partial match counts,
+            # web entities and landmark evidence. Optional page fetching can be enabled
+            # only after deploying a hardened egress proxy/network sandbox.
+            evidence["page_intelligence"] = []
+            evidence["page_inspection_status"] = (
+                "disabled_security"
+                if evidence["matching_pages"]
+                else "no_matching_pages"
             )
 
 
@@ -1577,9 +1585,30 @@ def image_scan(path):
         "partial_matches": vision_evidence.get("partial_matches", [])[:5],
         "similar_images": vision_evidence.get("similar_images", [])[:5],
         "page_intelligence": vision_evidence.get("page_intelligence", [])[:3],
+        "page_inspection_status": vision_evidence.get("page_inspection_status", "not_run"),
     }
 
     return findings, metadata
+
+
+def _dedupe_findings(findings):
+    """Remove exact/near duplicate scanner findings while keeping the strongest severity."""
+    rank = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
+    kept = {}
+    order = []
+    for item in findings or []:
+        category = re.sub(r"^Visible text:\s*", "", (item.get("category") or "").strip(), flags=re.I)
+        detail = re.sub(r"\s+", " ", (item.get("detail") or "").strip())
+        # Category + normalised core detail is stable enough to suppress duplicated
+        # caption/OCR findings without merging genuinely different evidence.
+        core = re.sub(r"^Observed readable text in the image may expose sensitive information\.\s*", "", detail, flags=re.I)
+        key = (category.lower(), core.lower())
+        if key not in kept:
+            kept[key] = dict(item)
+            order.append(key)
+        elif rank.get((item.get("severity") or "LOW").upper(), 0) > rank.get((kept[key].get("severity") or "LOW").upper(), 0):
+            kept[key] = dict(item)
+    return [kept[k] for k in order]
 
 
 def risk(score):
@@ -4145,12 +4174,13 @@ def _vision_report_from_check(check, findings):
     similar_images = vision_data.get("similar_images") or []
     visible_text = (vision_data.get("visible_text") or "").strip()
     page_intelligence = vision_data.get("page_intelligence") or []
+    page_inspection_status = vision_data.get("page_inspection_status") or "not_run"
 
     match_count = len(matching_pages) + len(full_matches) + len(partial_matches)
     has_external = bool(match_count)
     has_location = bool(landmarks)
 
-    # Confidence is evidence-strength, not certainty of identity or exact location.
+    # Evidence strength summarises the amount of corroborating scanner evidence; it is not a calibrated probability of identity or exact location.
     confidence = 20
     if visible_text:
         confidence += 15
@@ -4202,6 +4232,7 @@ def _vision_report_from_check(check, findings):
         "partial_matches": partial_matches,
         "similar_images": similar_images,
         "page_intelligence": page_intelligence,
+        "page_inspection_status": page_inspection_status,
         "confidence": confidence,
         "location_status": location_status,
         "osint_exposure": osint_exposure,
@@ -4322,7 +4353,7 @@ a{color:inherit}.main{max-width:1000px;margin:auto;padding:30px 20px}
             <div class="value" style="font-size:1.25rem;font-weight:850;margin-top:6px">{{ vision_report.osint_exposure }}</div>
         </div>
         <div class="evidence-card">
-            <div class="muted">Evidence confidence</div>
+            <div class="muted">Evidence strength</div>
             <div class="value" style="font-size:1.25rem;font-weight:850;margin-top:6px">{{ vision_report.confidence }}%</div>
         </div>
         <div class="evidence-card">
@@ -4370,7 +4401,7 @@ a{color:inherit}.main{max-width:1000px;margin:auto;padding:30px 20px}
 </section>
 {% endif %}
 
-{% if vision_report.corroborated or vision_report.matching_pages or vision_report.full_matches or vision_report.partial_matches %}
+{% if vision_report.has_vision_evidence %}
 <section class="card">
     <h2>Externally corroborated / public-web matches</h2>
     <p class="muted">These sources may contain the same or a related image. Review them as OSINT leads; PostGuard does not claim they prove identity, ownership or exact location.</p>
@@ -4383,40 +4414,28 @@ a{color:inherit}.main{max-width:1000px;margin:auto;padding:30px 20px}
     {% if vision_report.full_matches %}<div class="muted" style="margin-top:12px">Full image matches: {{ vision_report.full_matches|length }}</div>{% endif %}
     {% if vision_report.partial_matches %}<div class="muted">Partial image matches: {{ vision_report.partial_matches|length }}</div>{% endif %}
 
-    <h3 style="margin-top:22px">Matched-page intelligence</h3>
-    {% if vision_report.page_intelligence %}
-    <p class="muted">PostGuard safely inspected up to three public pages returned by Google. Redirects are followed only when every destination passes PostGuard's public-network safety checks.</p>
-    {% for page in vision_report.page_intelligence %}
+    <h3 style="margin-top:22px">Public-source intelligence</h3>
+    {% if vision_report.matching_pages %}
     <div class="source-card">
-        {% if page.status == 'inspected' %}
-            <div class="source-title">{{ page.title or 'Public matched page' }}</div>
-            <div class="muted" style="margin-top:5px">Context confidence: {{ page.confidence }}% · Externally corroborated context, not definitive identification.</div>
-            {% if page.redirect_chain %}
-            <div class="muted" style="margin-top:5px">Safely followed {{ page.redirect_chain|length }} validated redirect{{ '' if page.redirect_chain|length == 1 else 's' }}.</div>
-            {% endif %}
-            {% if page.description %}<div style="margin-top:9px">{{ page.description }}</div>{% endif %}
-            {% if page.clues %}
-            <div style="margin-top:8px">
-                {% for clue in page.clues %}<span class="clue">{{ clue }}</span>{% endfor %}
-            </div>
-            {% endif %}
-            {% if page.ocr_overlap %}
-            <div class="muted" style="margin-top:9px"><b>OCR/context overlap:</b> {{ page.ocr_overlap|join(', ') }}</div>
-            {% endif %}
-            <a class="osint-link" href="{{ page.url }}" target="_blank" rel="noopener noreferrer nofollow">Review public source</a>
-        {% else %}
-            <div class="source-title">Public source not automatically inspected</div>
-            <div class="muted" style="margin-top:6px">{{ page.reason }}</div>
-            <a class="osint-link" href="{{ page.url }}" target="_blank" rel="noopener noreferrer nofollow">Review source manually</a>
+        <div class="source-title">Google Web Detection found {{ vision_report.matching_pages|length }} public matching page{{ '' if vision_report.matching_pages|length == 1 else 's' }}</div>
+        <div class="muted" style="margin-top:6px">
+            PostGuard does not automatically fetch arbitrary third-party match URLs from the application server.
+            This production safeguard reduces SSRF and DNS-rebinding risk. Review the Google-returned sources above
+            as corroborating OSINT leads; they are not proof of identity, ownership or exact location.
+        </div>
+        {% if vision_report.web_entities %}
+        <div style="margin-top:10px"><b>Google-derived context:</b>
+            {% for entity in vision_report.web_entities %}
+                <span class="clue">{{ entity.description }}</span>
+            {% endfor %}
+        </div>
         {% endif %}
     </div>
-    {% endfor %}
     {% else %}
     <div class="source-card">
-        <div class="source-title">No public page context was automatically inspected</div>
+        <div class="source-title">No public matching pages detected</div>
         <div class="muted" style="margin-top:6px">
-            Google Web Detection returned matching pages, but no matched-page analysis was persisted for
-            this scan. Existing Web Detection matches remain available above for manual review.
+            Google Web Detection did not return a public page match for this scan. This does not prove the image is absent from the public web.
         </div>
     </div>
     {% endif %}
@@ -4756,9 +4775,18 @@ def scan():
             try:
                 with Image.open(path) as img:
                     img.verify()
+                # Re-open after verify() and enforce decompression/dimension limits.
+                with Image.open(path) as img:
+                    width, height = img.size
+                    if width < 1 or height < 1 or width > 12000 or height > 12000:
+                        raise ValueError("Image dimensions outside permitted range")
+                    if width * height > 40_000_000:
+                        raise ValueError("Image pixel count exceeds permitted limit")
+                    if (img.format or "").upper() not in {"JPEG", "PNG", "WEBP"}:
+                        raise ValueError("Unsupported decoded image format")
             except Exception:
                 return jsonify(
-                    error="Uploaded file is not a valid image."
+                    error="Uploaded file is not a valid or supported image."
                 ), 400
 
             image_findings, metadata = image_scan(
@@ -4766,6 +4794,7 @@ def scan():
             )
 
             findings += image_findings
+            findings = _dedupe_findings(findings)
 
             image_points = sum(
                 20
