@@ -16,7 +16,7 @@ import socket
 import ipaddress
 from html.parser import HTMLParser
 from email.message import EmailMessage
-from urllib.parse import quote, urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit, urljoin
 from urllib.request import Request, urlopen, build_opener, HTTPRedirectHandler
 from urllib.error import HTTPError, URLError
 
@@ -1233,14 +1233,26 @@ def _analyse_public_page(url, upload_text=""):
 
 
 def _matched_page_intelligence(urls, upload_text=""):
-    """Inspect only a few Google-returned public pages to control latency and exposure."""
+    """Inspect only a few Google-returned public pages to control latency and exposure.
+
+    One failed/hostile source must never discard results from the other sources.
+    """
     results = []
     seen = set()
     for url in urls or []:
         if not url or url in seen:
             continue
         seen.add(url)
-        results.append(_analyse_public_page(url, upload_text))
+        try:
+            result = _analyse_public_page(url, upload_text)
+        except Exception:
+            app.logger.exception("Matched-page intelligence source inspection failed")
+            result = {
+                "url": str(url)[:1000],
+                "status": "unavailable",
+                "reason": "This public source could not be inspected automatically.",
+            }
+        results.append(result)
         if len(results) >= 3:
             break
     return results
@@ -1388,27 +1400,8 @@ def google_vision_scan(path):
             exactish_count = len(evidence["full_matches"]) + len(evidence["partial_matches"])
             page_count = len(evidence["matching_pages"])
 
-            # Inspect a tightly limited number of Google-returned public pages.
-            # SSRF protections reject private/local/reserved targets and redirects.
-            # Run matched-page inspection only after Web Detection URLs are populated.
-            # Normalise URL values defensively in case a client/library version returns
-            # structured objects rather than plain strings.
-            _page_urls = []
-            for _page in evidence.get("matching_pages", []):
-                if isinstance(_page, str):
-                    _url = _page
-                elif isinstance(_page, dict):
-                    _url = _page.get("url") or ""
-                else:
-                    _url = getattr(_page, "url", "") or ""
-                if _url:
-                    _page_urls.append(str(_url))
-            evidence["matching_pages"] = _page_urls[:10]
-            evidence["page_intelligence"] = _matched_page_intelligence(
-                evidence["matching_pages"],
-                evidence.get("visible_text", ""),
-            )
-
+            # Record the Google Web Detection result before optional external page inspection.
+            # A third-party website failure must not erase Google's own corroboration.
             if exactish_count or page_count:
                 findings.append({
                     "category": "External web match / OSINT exposure",
@@ -1438,6 +1431,25 @@ def google_vision_scan(path):
                     ),
                     "severity": "MEDIUM",
                 })
+
+            # Inspect a tightly limited number of Google-returned public pages.
+            # SSRF protections reject private/local/reserved targets and validate redirects.
+            _page_urls = []
+            for _page in evidence.get("matching_pages", []):
+                if isinstance(_page, str):
+                    _url = _page
+                elif isinstance(_page, dict):
+                    _url = _page.get("url") or ""
+                else:
+                    _url = getattr(_page, "url", "") or ""
+                if _url:
+                    _page_urls.append(str(_url))
+            evidence["matching_pages"] = _page_urls[:10]
+            evidence["page_intelligence"] = _matched_page_intelligence(
+                evidence["matching_pages"],
+                evidence.get("visible_text", ""),
+            )
+
 
     except Exception:
         # Do not expose credentials, API responses or customer image content in logs/UI.
@@ -4403,9 +4415,8 @@ a{color:inherit}.main{max-width:1000px;margin:auto;padding:30px 20px}
     <div class="source-card">
         <div class="source-title">No public page context was automatically inspected</div>
         <div class="muted" style="margin-top:6px">
-            Google may have returned an image match without a usable public page URL, or the source
-            was blocked by PostGuard's public-network/redirect safety checks. Existing Web Detection
-            matches remain available above for manual review.
+            Google Web Detection returned matching pages, but no matched-page analysis was persisted for
+            this scan. Existing Web Detection matches remain available above for manual review.
         </div>
     </div>
     {% endif %}
