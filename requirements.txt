@@ -5,3 +5,4 @@ gunicorn==23.0.0
 Pillow==11.3.0
 psycopg[binary]==3.2.10
 qrcode[pil]==8.2
+google-cloud-vision>=3.10.0
