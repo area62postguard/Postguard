@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import io
 import secrets
 import hmac
 import sqlite3
@@ -38,6 +39,7 @@ from flask import (
 from werkzeug.security import generate_password_hash, check_password_hash
 from PIL import Image, ExifTags
 from flask_wtf.csrf import CSRFProtect
+import qrcode
 
 
 # ============================================================
@@ -1854,11 +1856,20 @@ label{display:block;margin:16px 0 7px}input{width:100%;padding:12px;border-radiu
 <label>Confirm new password</label><input name="confirm" type="password" minlength="12" required autocomplete="new-password">
 <button class="btn">Set new password</button></form>
 {% elif form_kind == 'mfa_setup' %}
-<p class="muted">Add this secret to your authenticator app:</p>
-<p><strong style="word-break:break-all">{{ secret }}</strong></p>
-<p class="muted">Account: {{ session.get('email') }}</p>
+<p class="muted">Scan this QR code with your authenticator app, then enter the 6-digit code it generates.</p>
+<div style="display:grid;place-items:center;margin:18px 0 14px">
+  <div style="background:#fff;padding:12px;border-radius:14px;line-height:0">
+    <img src="data:image/png;base64,{{ qr_png }}" alt="PostGuard MFA QR code" style="width:220px;height:220px;display:block">
+  </div>
+</div>
+<p class="muted" style="text-align:center">Account: {{ session.get('email') }}</p>
+<details style="margin:16px 0;color:#9aabc2">
+  <summary style="cursor:pointer">Can't scan the QR code?</summary>
+  <p class="muted">Enter this setup key manually in your authenticator app:</p>
+  <p><strong style="word-break:break-all;color:#fff">{{ secret }}</strong></p>
+</details>
 <form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-<label>6-digit authenticator code</label><input name="code" inputmode="numeric" pattern="[0-9]{6}" required>
+<label>6-digit authenticator code</label><input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required autofocus>
 <button class="btn">Enable MFA</button></form>
 {% elif form_kind == 'mfa' %}
 <form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -2018,6 +2029,22 @@ def forgot_password_token(token):
     )
 
 
+def _mfa_qr_png(secret, account_email):
+    label = quote(f"PostGuard:{account_email}", safe="")
+    issuer = quote("PostGuard", safe="")
+    uri = (
+        f"otpauth://totp/{label}?secret={secret}"
+        f"&issuer={issuer}&algorithm=SHA1&digits=6&period=30"
+    )
+    qr = qrcode.QRCode(version=None, box_size=8, border=4)
+    qr.add_data(uri)
+    qr.make(fit=True)
+    image = qr.make_image(fill_color="black", back_color="white")
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
 @app.route("/mfa/setup", methods=["GET", "POST"])
 @auth
 @limiter.limit("8 per 10 minutes", methods=["POST"])
@@ -2036,10 +2063,18 @@ def mfa_setup():
         c.close()
         return redirect(url_for("mfa_challenge"))
 
-    secret = row["mfa_secret"] or _totp_secret()
-    if not row["mfa_secret"]:
+    # Issue a fresh setup secret once per admin login session. This deliberately
+    # rotates any previously displayed but not-yet-enabled secret before enrolment.
+    if not session.get("mfa_setup_secret_issued"):
+        secret = _totp_secret()
         c.execute("UPDATE users SET mfa_secret=? WHERE id=?", (secret, session["uid"]))
         c.commit()
+        session["mfa_setup_secret_issued"] = True
+    else:
+        secret = row["mfa_secret"] or _totp_secret()
+        if not row["mfa_secret"]:
+            c.execute("UPDATE users SET mfa_secret=? WHERE id=?", (secret, session["uid"]))
+            c.commit()
     c.close()
 
     if request.method == "POST":
@@ -2051,6 +2086,7 @@ def mfa_setup():
             security_event("mfa_enabled", True, session["uid"])
             session["mfa_pending"] = False
             session["mfa_verified_at"] = now()
+            session.pop("mfa_setup_secret_issued", None)
             flash("Multi-factor authentication enabled.")
             return redirect(url_for("home"))
         security_event("mfa_setup", False, session["uid"])
@@ -2060,8 +2096,9 @@ def mfa_setup():
         SIMPLE_AUTH_PAGE,
         title="Secure Admin with MFA",
         message="PostGuard requires an authenticator-app code for production Admin access.",
-        form_kind="mfa_setup", secret=secret, action_url=None, action_label=None,
-        back_url=None,
+        form_kind="mfa_setup", secret=secret,
+        qr_png=_mfa_qr_png(secret, session.get("email", "admin")),
+        action_url=None, action_label=None, back_url=None,
     )
 
 
