@@ -1062,43 +1062,119 @@ def _analyse_public_page(url, upload_text=""):
     if not parsed:
         return {"url": url[:1000], "status": "blocked", "reason": "URL did not pass public-network safety checks."}
 
-    req = Request(
-        url,
-        headers={
-            "User-Agent": "PostGuard-OSINT/1.0 (+https://postguard.uk)",
-            "Accept": "text/html,application/xhtml+xml;q=0.9",
-        },
-        method="GET",
-    )
+    opener = build_opener(_NoRedirect())
+    current_url = url
+    redirect_chain = []
 
     try:
-        opener = build_opener(_NoRedirect())
-        with opener.open(req, timeout=4) as response:
+        response = None
+        for _hop in range(4):  # original request + at most 3 redirects
+            parsed = _public_http_target(current_url)
+            if not parsed:
+                return {
+                    "url": url[:1000],
+                    "status": "blocked",
+                    "reason": "A destination in the redirect chain did not pass public-network safety checks.",
+                    "redirect_chain": redirect_chain,
+                }
+
+            req = Request(
+                current_url,
+                headers={
+                    "User-Agent": "PostGuard-OSINT/1.0 (+https://postguard.uk)",
+                    "Accept": "text/html,application/xhtml+xml;q=0.9",
+                },
+                method="GET",
+            )
+
+            try:
+                response = opener.open(req, timeout=4)
+                break
+            except HTTPError as exc:
+                if 300 <= exc.code < 400:
+                    location = exc.headers.get("Location")
+                    if not location:
+                        return {
+                            "url": url[:1000],
+                            "status": "unavailable",
+                            "reason": f"Redirect HTTP {exc.code} had no Location header.",
+                            "redirect_chain": redirect_chain,
+                        }
+                    next_url = urljoin(current_url, location)
+                    if not _public_http_target(next_url):
+                        return {
+                            "url": url[:1000],
+                            "status": "blocked",
+                            "reason": "Redirect target failed PostGuard's public-network safety checks.",
+                            "redirect_chain": redirect_chain,
+                        }
+                    redirect_chain.append(next_url[:1000])
+                    current_url = next_url
+                    continue
+                return {
+                    "url": url[:1000],
+                    "status": "unavailable",
+                    "reason": f"Public page returned HTTP {exc.code}.",
+                    "redirect_chain": redirect_chain,
+                }
+        else:
+            return {
+                "url": url[:1000],
+                "status": "skipped",
+                "reason": "Matched page exceeded the maximum safe redirect limit.",
+                "redirect_chain": redirect_chain,
+            }
+
+        if response is None:
+            return {
+                "url": url[:1000],
+                "status": "unavailable",
+                "reason": "Public page could not be opened.",
+                "redirect_chain": redirect_chain,
+            }
+
+        with response:
             content_type = (response.headers.get("Content-Type") or "").lower()
             if "text/html" not in content_type and "application/xhtml+xml" not in content_type:
-                return {"url": url[:1000], "status": "skipped", "reason": "Matched source was not an HTML page."}
+                return {
+                    "url": url[:1000],
+                    "status": "skipped",
+                    "reason": "Matched source was not an HTML page.",
+                    "redirect_chain": redirect_chain,
+                }
 
             declared = response.headers.get("Content-Length")
             if declared:
                 try:
                     if int(declared) > 512_000:
-                        return {"url": url[:1000], "status": "skipped", "reason": "Matched page exceeded the inspection size limit."}
+                        return {
+                            "url": url[:1000],
+                            "status": "skipped",
+                            "reason": "Matched page exceeded the inspection size limit.",
+                            "redirect_chain": redirect_chain,
+                        }
                 except ValueError:
                     pass
 
             raw = response.read(262_145)
             if len(raw) > 262_144:
-                return {"url": url[:1000], "status": "skipped", "reason": "Matched page exceeded the inspection size limit."}
+                return {
+                    "url": url[:1000],
+                    "status": "skipped",
+                    "reason": "Matched page exceeded the inspection size limit.",
+                    "redirect_chain": redirect_chain,
+                }
 
             charset = response.headers.get_content_charset() or "utf-8"
             html = raw.decode(charset, errors="replace")
-    except HTTPError as exc:
-        # Redirects are intentionally not followed. This prevents redirect-based SSRF.
-        if 300 <= exc.code < 400:
-            return {"url": url[:1000], "status": "skipped", "reason": "Redirect not followed for security."}
-        return {"url": url[:1000], "status": "unavailable", "reason": f"Public page returned HTTP {exc.code}."}
+
     except (URLError, TimeoutError, OSError):
-        return {"url": url[:1000], "status": "unavailable", "reason": "Public page could not be inspected safely."}
+        return {
+            "url": url[:1000],
+            "status": "unavailable",
+            "reason": "Public page could not be inspected safely.",
+            "redirect_chain": redirect_chain,
+        }
 
     parser = _PublicPageParser()
     try:
@@ -1145,6 +1221,8 @@ def _analyse_public_page(url, upload_text=""):
 
     return {
         "url": url[:1000],
+        "final_url": current_url[:1000],
+        "redirect_chain": redirect_chain,
         "status": "inspected",
         "title": title,
         "description": description,
@@ -4294,12 +4372,15 @@ a{color:inherit}.main{max-width:1000px;margin:auto;padding:30px 20px}
 
     <h3 style="margin-top:22px">Matched-page intelligence</h3>
     {% if vision_report.page_intelligence %}
-    <p class="muted">PostGuard safely inspected up to three public pages returned by Google. Redirects and non-public network destinations are not followed.</p>
+    <p class="muted">PostGuard safely inspected up to three public pages returned by Google. Redirects are followed only when every destination passes PostGuard's public-network safety checks.</p>
     {% for page in vision_report.page_intelligence %}
     <div class="source-card">
         {% if page.status == 'inspected' %}
             <div class="source-title">{{ page.title or 'Public matched page' }}</div>
             <div class="muted" style="margin-top:5px">Context confidence: {{ page.confidence }}% · Externally corroborated context, not definitive identification.</div>
+            {% if page.redirect_chain %}
+            <div class="muted" style="margin-top:5px">Safely followed {{ page.redirect_chain|length }} validated redirect{{ '' if page.redirect_chain|length == 1 else 's' }}.</div>
+            {% endif %}
             {% if page.description %}<div style="margin-top:9px">{{ page.description }}</div>{% endif %}
             {% if page.clues %}
             <div style="margin-top:8px">
