@@ -12,9 +12,12 @@ import smtplib
 import ssl
 import struct
 import time
+import socket
+import ipaddress
+from html.parser import HTMLParser
 from email.message import EmailMessage
-from urllib.parse import quote, urlencode
-from urllib.request import Request, urlopen
+from urllib.parse import quote, urlencode, urlsplit
+from urllib.request import Request, urlopen, build_opener, HTTPRedirectHandler
 from urllib.error import HTTPError, URLError
 
 import psycopg
@@ -967,6 +970,204 @@ def caption_scan(text):
 # ============================================================
 
 
+
+class _NoRedirect(HTTPRedirectHandler):
+    """Do not automatically follow redirects while inspecting untrusted OSINT URLs."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+class _PublicPageParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.title = []
+        self.description = ""
+        self.text = []
+        self._in_title = False
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag, attrs):
+        tag = tag.lower()
+        attrs = dict(attrs)
+        if tag == "title":
+            self._in_title = True
+        if tag in ("script", "style", "noscript", "svg"):
+            self._skip_depth += 1
+        if tag == "meta":
+            key = (attrs.get("name") or attrs.get("property") or "").lower()
+            if key in ("description", "og:description", "twitter:description") and not self.description:
+                self.description = (attrs.get("content") or "").strip()
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+        if tag == "title":
+            self._in_title = False
+        if tag in ("script", "style", "noscript", "svg") and self._skip_depth:
+            self._skip_depth -= 1
+
+    def handle_data(self, data):
+        if self._skip_depth:
+            return
+        cleaned = re.sub(r"\s+", " ", data or "").strip()
+        if not cleaned:
+            return
+        if self._in_title:
+            self.title.append(cleaned)
+        self.text.append(cleaned)
+
+
+def _public_http_target(url):
+    """Validate a Web Detection URL and reject private/local/reserved network targets."""
+    try:
+        parsed = urlsplit(url)
+    except Exception:
+        return None
+
+    if parsed.scheme.lower() not in ("http", "https"):
+        return None
+    if not parsed.hostname or parsed.username or parsed.password:
+        return None
+
+    host = parsed.hostname.rstrip(".").lower()
+    if host in ("localhost", "localhost.localdomain") or host.endswith(".localhost"):
+        return None
+
+    try:
+        infos = socket.getaddrinfo(host, parsed.port or (443 if parsed.scheme == "https" else 80),
+                                   type=socket.SOCK_STREAM)
+    except OSError:
+        return None
+
+    addresses = set()
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return None
+        # global=True rejects private, loopback, link-local, multicast, reserved,
+        # documentation and other non-public ranges.
+        if not ip.is_global:
+            return None
+        addresses.add(str(ip))
+
+    return parsed if addresses else None
+
+
+def _analyse_public_page(url, upload_text=""):
+    """Fetch a small public HTML page safely and extract security-relevant context.
+
+    Returned data is evidence for review, never definitive proof of identity/location.
+    """
+    parsed = _public_http_target(url)
+    if not parsed:
+        return {"url": url[:1000], "status": "blocked", "reason": "URL did not pass public-network safety checks."}
+
+    req = Request(
+        url,
+        headers={
+            "User-Agent": "PostGuard-OSINT/1.0 (+https://postguard.uk)",
+            "Accept": "text/html,application/xhtml+xml;q=0.9",
+        },
+        method="GET",
+    )
+
+    try:
+        opener = build_opener(_NoRedirect())
+        with opener.open(req, timeout=4) as response:
+            content_type = (response.headers.get("Content-Type") or "").lower()
+            if "text/html" not in content_type and "application/xhtml+xml" not in content_type:
+                return {"url": url[:1000], "status": "skipped", "reason": "Matched source was not an HTML page."}
+
+            declared = response.headers.get("Content-Length")
+            if declared:
+                try:
+                    if int(declared) > 512_000:
+                        return {"url": url[:1000], "status": "skipped", "reason": "Matched page exceeded the inspection size limit."}
+                except ValueError:
+                    pass
+
+            raw = response.read(262_145)
+            if len(raw) > 262_144:
+                return {"url": url[:1000], "status": "skipped", "reason": "Matched page exceeded the inspection size limit."}
+
+            charset = response.headers.get_content_charset() or "utf-8"
+            html = raw.decode(charset, errors="replace")
+    except HTTPError as exc:
+        # Redirects are intentionally not followed. This prevents redirect-based SSRF.
+        if 300 <= exc.code < 400:
+            return {"url": url[:1000], "status": "skipped", "reason": "Redirect not followed for security."}
+        return {"url": url[:1000], "status": "unavailable", "reason": f"Public page returned HTTP {exc.code}."}
+    except (URLError, TimeoutError, OSError):
+        return {"url": url[:1000], "status": "unavailable", "reason": "Public page could not be inspected safely."}
+
+    parser = _PublicPageParser()
+    try:
+        parser.feed(html)
+    except Exception:
+        return {"url": url[:1000], "status": "unavailable", "reason": "Public page HTML could not be parsed."}
+
+    title = " ".join(parser.title)[:300]
+    description = parser.description[:700]
+    body = " ".join(parser.text)
+    body = re.sub(r"\s+", " ", body)[:12_000]
+    searchable = f"{title} {description} {body}".lower()
+
+    clue_rules = [
+        ("school / education", r"\b(school|academy|college|university|nursery|campus)\b"),
+        ("workplace / business", r"\b(office|headquarters|hq|workplace|company|store|shop|restaurant|bar|hotel)\b"),
+        ("travel / transport", r"\b(airport|station|terminal|flight|boarding|train|hotel|departure|arrival)\b"),
+        ("event / venue", r"\b(stadium|arena|venue|festival|concert|conference|match|event)\b"),
+        ("property / residence", r"\b(home|house|residence|apartment|flat|estate|property)\b"),
+        ("location language", r"\b(located|location|address|street|road|avenue|city|town|village|district)\b"),
+    ]
+    clues = [label for label, pattern in clue_rules if re.search(pattern, searchable, re.I)]
+
+    # Compare a limited set of meaningful OCR tokens with page context.
+    upload_tokens = {
+        t.lower() for t in re.findall(r"[A-Za-z][A-Za-z0-9'’-]{3,}", upload_text or "")
+        if t.lower() not in {
+            "this","that","with","from","have","your","their","they","there","about","more",
+            "into","been","were","will","would","could","should","image","post","follow"
+        }
+    }
+    overlap = sorted((t for t in upload_tokens if t in searchable), key=len, reverse=True)[:12]
+
+    confidence = 35
+    if title:
+        confidence += 10
+    if description:
+        confidence += 10
+    if clues:
+        confidence += min(20, len(clues) * 5)
+    if overlap:
+        confidence += min(20, len(overlap) * 3)
+    confidence = min(90, confidence)
+
+    return {
+        "url": url[:1000],
+        "status": "inspected",
+        "title": title,
+        "description": description,
+        "clues": clues,
+        "ocr_overlap": overlap,
+        "confidence": confidence,
+    }
+
+
+def _matched_page_intelligence(urls, upload_text=""):
+    """Inspect only a few Google-returned public pages to control latency and exposure."""
+    results = []
+    seen = set()
+    for url in urls or []:
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        results.append(_analyse_public_page(url, upload_text))
+        if len(results) >= 3:
+            break
+    return results
+
+
 def google_vision_scan(path):
     """Analyse an authorised upload with Google Cloud Vision.
 
@@ -982,6 +1183,7 @@ def google_vision_scan(path):
         "full_matches": [],
         "partial_matches": [],
         "similar_images": [],
+        "page_intelligence": [],
     }
 
     try:
@@ -1107,6 +1309,13 @@ def google_vision_scan(path):
 
             exactish_count = len(evidence["full_matches"]) + len(evidence["partial_matches"])
             page_count = len(evidence["matching_pages"])
+
+            # Inspect a tightly limited number of Google-returned public pages.
+            # SSRF protections reject private/local/reserved targets and redirects.
+            evidence["page_intelligence"] = _matched_page_intelligence(
+                evidence["matching_pages"],
+                evidence["visible_text"],
+            )
 
             if exactish_count or page_count:
                 findings.append({
@@ -3830,6 +4039,7 @@ def _vision_report_from_check(check, findings):
     partial_matches = vision_data.get("partial_matches") or []
     similar_images = vision_data.get("similar_images") or []
     visible_text = (vision_data.get("visible_text") or "").strip()
+    page_intelligence = vision_data.get("page_intelligence") or []
 
     match_count = len(matching_pages) + len(full_matches) + len(partial_matches)
     has_external = bool(match_count)
@@ -3845,6 +4055,8 @@ def _vision_report_from_check(check, findings):
         confidence += 10
     if matching_pages:
         confidence += 15
+    if any(p.get("status") == "inspected" for p in page_intelligence):
+        confidence += 5
     if full_matches:
         confidence += 20
     elif partial_matches:
@@ -3884,12 +4096,13 @@ def _vision_report_from_check(check, findings):
         "full_matches": full_matches,
         "partial_matches": partial_matches,
         "similar_images": similar_images,
+        "page_intelligence": page_intelligence,
         "confidence": confidence,
         "location_status": location_status,
         "osint_exposure": osint_exposure,
         "has_vision_evidence": bool(
             visible_text or landmarks or web_entities or matching_pages
-            or full_matches or partial_matches or similar_images
+            or full_matches or partial_matches or similar_images or page_intelligence
         ),
     }
 
@@ -3922,6 +4135,7 @@ a{color:inherit}.main{max-width:1000px;margin:auto;padding:30px 20px}
 .tag{display:inline-block;border:1px solid #3a4b68;border-radius:999px;padding:4px 8px;margin:3px 4px 3px 0;font-size:.78rem;color:#c9d6e8}
 .osint-link{display:block;color:#9fc0ff;overflow-wrap:anywhere;margin-top:7px}
 .pretext{white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;overflow:auto;background:#08111f;border:1px solid #253754;border-radius:10px;padding:12px}
+.source-card{background:#08111f;border:1px solid #2c3a55;border-radius:12px;padding:14px;margin-top:10px}.source-title{font-weight:850}.clue{display:inline-block;border:1px solid #4a5d7a;border-radius:999px;padding:4px 8px;margin:5px 4px 0 0;font-size:.78rem}
 @media(max-width:800px){.evidence-grid{grid-template-columns:1fr}}
 @media(max-width:700px){.grid{grid-template-columns:1fr}}
 
@@ -4063,6 +4277,33 @@ a{color:inherit}.main{max-width:1000px;margin:auto;padding:30px 20px}
     {% endfor %}
     {% if vision_report.full_matches %}<div class="muted" style="margin-top:12px">Full image matches: {{ vision_report.full_matches|length }}</div>{% endif %}
     {% if vision_report.partial_matches %}<div class="muted">Partial image matches: {{ vision_report.partial_matches|length }}</div>{% endif %}
+
+    {% if vision_report.page_intelligence %}
+    <h3 style="margin-top:22px">Matched-page intelligence</h3>
+    <p class="muted">PostGuard safely inspected up to three public pages returned by Google. Redirects and non-public network destinations are not followed.</p>
+    {% for page in vision_report.page_intelligence %}
+    <div class="source-card">
+        {% if page.status == 'inspected' %}
+            <div class="source-title">{{ page.title or 'Public matched page' }}</div>
+            <div class="muted" style="margin-top:5px">Context confidence: {{ page.confidence }}% · Externally corroborated context, not definitive identification.</div>
+            {% if page.description %}<div style="margin-top:9px">{{ page.description }}</div>{% endif %}
+            {% if page.clues %}
+            <div style="margin-top:8px">
+                {% for clue in page.clues %}<span class="clue">{{ clue }}</span>{% endfor %}
+            </div>
+            {% endif %}
+            {% if page.ocr_overlap %}
+            <div class="muted" style="margin-top:9px"><b>OCR/context overlap:</b> {{ page.ocr_overlap|join(', ') }}</div>
+            {% endif %}
+            <a class="osint-link" href="{{ page.url }}" target="_blank" rel="noopener noreferrer nofollow">Review public source</a>
+        {% else %}
+            <div class="source-title">Public source not automatically inspected</div>
+            <div class="muted" style="margin-top:6px">{{ page.reason }}</div>
+            <a class="osint-link" href="{{ page.url }}" target="_blank" rel="noopener noreferrer nofollow">Review source manually</a>
+        {% endif %}
+    </div>
+    {% endfor %}
+    {% endif %}
 </section>
 {% endif %}
 
