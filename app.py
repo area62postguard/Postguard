@@ -478,6 +478,9 @@ def _request_ip_hash():
 def security_event(event_type, success, user_id=None):
     try:
         c = db()
+        # Enforce the published 12-month security/audit-event retention window.
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=365)).isoformat()
+        c.execute("DELETE FROM security_events WHERE created_at < ?", (cutoff,))
         c.execute(
             """
             INSERT INTO security_events(
@@ -1260,7 +1263,10 @@ input::placeholder{color:#61748f}
                 <button class="primary" type="submit">Create secure account</button>
                 <div class="note">
                     By creating an account, you are creating a private PostGuard workspace.
-                    Passwords are stored as secure hashes rather than readable passwords.
+                    Passwords are stored as secure hashes rather than readable passwords.<br>
+                    By creating an account you confirm you are at least 16 and agree to the
+                    <a class="mini-link" href="{{ url_for('terms_page') }}">Terms of Service</a> and acknowledge the
+                    <a class="mini-link" href="{{ url_for('privacy_page') }}">Privacy Notice</a>.
                 </div>
             </form>
             {% else %}
@@ -1288,6 +1294,8 @@ input::placeholder{color:#61748f}
                     <a class="mini-link" href="{{ url_for('register') }}">Create an account</a>.
                     Administrators use this same secure sign-in.
                     <br><a class="mini-link" href="{{ url_for('forgot_password') }}">Forgot your password?</a>
+                    · <a class="mini-link" href="{{ url_for('privacy_page') }}">Privacy</a>
+                    · <a class="mini-link" href="{{ url_for('terms_page') }}">Terms</a>
                 </div>
             </form>
             {% endif %}
@@ -4874,7 +4882,8 @@ main{width:min(760px,calc(100% - 32px));margin:40px auto}.card{background:#151c2
 </div>
 <h1>My Account</h1>
 {% with messages=get_flashed_messages() %}{% if messages %}{% for m in messages %}<div class="flash">{{ m }}</div>{% endfor %}{% endif %}{% endwith %}
-<div class="card"><h2>Account details</h2><p><strong>Email:</strong> {{ user["email"] }}</p><p><strong>Account type:</strong> {{ user["role"] or "user" }}</p><p><strong>Registered:</strong> {{ user["created_at"] or "—" }}</p></div>
+<div class="card"><h2>Account details</h2><p><strong>Email:</strong> {{ user["email"] }}</p><p><strong>Account type:</strong> {{ user["role"] or "user" }}</p><p><strong>Registered:</strong> {{ user["created_at"] or "—" }}</p>
+<p><a href="{{ url_for('privacy_page') }}">Privacy Notice</a> · <a href="{{ url_for('data_retention_page') }}">Data Retention</a> · <a href="{{ url_for('terms_page') }}">Terms of Service</a></p></div>
 <div class="card"><h2>Change password</h2>
 <form method="post" action="{{ url_for('account_change_password') }}">
 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -4964,6 +4973,9 @@ def account_delete():
         c.execute("DELETE FROM checks WHERE user_id=?",(uid,))
         c.execute("DELETE FROM principals WHERE user_id=?",(uid,))
         c.execute("DELETE FROM audit WHERE user_id=?",(uid,))
+        # One-use verification/reset tokens are customer account data and are removed immediately.
+        c.execute("DELETE FROM auth_tokens WHERE user_id=?",(uid,))
+        # Security events are deliberately retained under the 12-month security-log policy.
         c.execute("DELETE FROM users WHERE id=?",(uid,))
         c.commit(); c.close()
         session.clear()
@@ -5193,6 +5205,9 @@ def admin_delete_user(user_id):
         c.execute("DELETE FROM checks WHERE user_id=?", (user_id,))
         c.execute("DELETE FROM principals WHERE user_id=?", (user_id,))
         c.execute("DELETE FROM audit WHERE user_id=?", (user_id,))
+        # One-use verification/reset tokens are customer account data and are removed immediately.
+        c.execute("DELETE FROM auth_tokens WHERE user_id=?", (user_id,))
+        # Security events are deliberately retained under the 12-month security-log policy.
         c.execute("DELETE FROM users WHERE id=?", (user_id,))
         c.commit()
         c.close()
@@ -5282,62 +5297,111 @@ def admin_user_detail(user_id):
 
 # ============================================================
 # PUBLIC PRIVACY / TERMS / RETENTION INFORMATION
-# Draft operational pages. Obtain UK legal review before commercial launch.
+# Launch drafts: obtain qualified UK legal/privacy review before commercial launch.
 # ============================================================
 
 LEGAL_PAGE = """
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>PostGuard · {{ title }}</title><style>
 :root{color-scheme:dark}body{margin:0;font-family:system-ui,sans-serif;background:#07101d;color:#f6f8fb}
-main{width:min(900px,calc(100% - 32px));margin:40px auto;background:#0d1828;border:1px solid #243754;border-radius:16px;padding:28px}
-img{width:88px;height:88px;border-radius:50%;object-fit:cover}h1,h2{color:#fff}.muted,p,li{color:#b6c3d4;line-height:1.65}
-a{color:#a9c5ff}.notice{border:1px solid #705d34;background:#261f11;padding:12px;border-radius:9px}
+main{width:min(920px,calc(100% - 32px));margin:40px auto;background:#0d1828;border:1px solid #243754;border-radius:16px;padding:28px}
+img{width:88px;height:88px;border-radius:50%;object-fit:cover}h1,h2,h3{color:#fff}.muted,p,li,td,th{color:#b6c3d4;line-height:1.65}
+a{color:#a9c5ff}.notice{border:1px solid #705d34;background:#261f11;padding:12px;border-radius:9px}.meta{color:#8fa1b8;font-size:.93rem}
+table{width:100%;border-collapse:collapse;margin:16px 0}th,td{border:1px solid #243754;padding:10px;text-align:left;vertical-align:top}th{color:#fff;background:#111f33}
 </style></head><body><main>
 <img src="{{ url_for('static',filename='postguard_logo.jpg') }}" alt="PostGuard">
 <h1>{{ title }}</h1>
-<div class="notice">Production draft: this page must be reviewed and approved by qualified UK legal/privacy counsel before commercial launch.</div>
+<p class="meta">Effective: 4 September 2026 · Version 1.0</p>
+<div class="notice"><strong>Launch draft.</strong> This document reflects PostGuard's current product design and privacy decisions, but must be reviewed and approved by qualified UK legal/privacy counsel before commercial launch.</div>
 {{ body|safe }}
-<p><a href="{{ url_for('login') }}">Return to PostGuard</a></p>
+<p><a href="{{ url_for('login') }}">Return to PostGuard</a> · <a href="{{ url_for('privacy_page') }}">Privacy</a> · <a href="{{ url_for('terms_page') }}">Terms</a> · <a href="{{ url_for('data_retention_page') }}">Data retention</a></p>
 </main></body></html>
 """
 
 @app.get("/privacy")
 def privacy_page():
     body = """
-    <h2>What PostGuard processes</h2>
-    <p>PostGuard processes account information and content a user chooses to submit for security-risk analysis, together with operational security records needed to protect the service.</p>
-    <h2>Why it is processed</h2>
-    <p>The service uses this information to provide pre-publication privacy/security checks, customer alerts and case-management functions, account security and fraud/abuse prevention.</p>
-    <h2>Data minimisation</h2>
-    <p>Passwords are stored as secure password hashes. Uploaded scan images are processed temporarily by the current application and are not intended to be retained as permanent media records.</p>
-    <h2>Your choices</h2>
-    <p>Customers can change their password and delete their PostGuard account from the Account Centre. Additional statutory rights and controller/contact details must be completed in the legally reviewed production notice.</p>
+    <h2>1. Who we are</h2>
+    <p>PostGuard is currently operated as a pre-incorporation business in the United Kingdom. For the purposes of this launch draft, PostGuard determines why and how personal information is used when providing the PostGuard service.</p>
+    <p>Website: <a href="https://www.postguard.uk">www.postguard.uk</a><br>Security and privacy contact: <a href="mailto:security@postguard.uk">security@postguard.uk</a></p>
+
+    <h2>2. Who may use PostGuard</h2>
+    <p>You must be at least 16 years old to create and use a PostGuard account. PostGuard is not intended for accounts belonging to children under 16.</p>
+
+    <h2>3. Information we process</h2>
+    <p>Depending on how you use PostGuard, we may process account information such as your email address and account settings; authentication and security records; captions, text, images and metadata you choose to submit for a PostGuard check; scan results, risk scores, findings and safer-post suggestions; alerts, cases and notes; and technical information used to protect the service, such as a privacy-protective hash derived from an IP address and a limited user-agent record.</p>
+    <p>Passwords are not stored in readable form. PostGuard stores password hashes. The current scanner processes uploaded images temporarily and is not designed to retain the uploaded image as permanent media after the scan.</p>
+
+    <h2>4. Why we use information and our lawful bases</h2>
+    <table><tr><th>Purpose</th><th>Typical lawful basis</th></tr>
+    <tr><td>Create and manage your account and provide requested PostGuard scanning, alerts, cases and account features.</td><td>Contract.</td></tr>
+    <tr><td>Protect accounts and systems, investigate abuse, maintain security records, prevent fraud and diagnose security incidents.</td><td>Legitimate interests, where those interests are not overridden by your rights and interests.</td></tr>
+    <tr><td>Send optional promotional or marketing communications.</td><td>Consent. Marketing is opt-in and you may withdraw consent.</td></tr>
+    <tr><td>Keep or disclose information where applicable law requires us to do so.</td><td>Legal obligation.</td></tr></table>
+    <p>Where PostGuard relies on legitimate interests, the interests include protecting customers, maintaining the integrity and security of the service, preventing misuse and investigating security incidents. PostGuard should document the relevant balancing assessment for production processing.</p>
+
+    <h2>5. Post checks, risk scoring and automated processing</h2>
+    <p>PostGuard automatically analyses submitted content and may generate a risk score, findings, recommendations and a publishing decision such as SAFE TO POST, REVIEW BEFORE POSTING or DO NOT POST. The current service is a decision-support tool: a low-risk result is not a guarantee that content is safe, and the user remains responsible for deciding whether to publish.</p>
+    <p>PostGuard does not currently intend these risk recommendations to make legal or similarly significant decisions about a person. If the product changes so that automated processing has legal or similarly significant effects, PostGuard will reassess the applicable safeguards and privacy information before that use begins.</p>
+
+    <h2>6. Images, posts and AI training</h2>
+    <p>You retain your rights in content you submit. PostGuard processes submitted content to provide the security/privacy service and related account functions. PostGuard does <strong>not</strong> use customer posts, images or scan content to train AI models. A future change to that position would require a separate assessment and appropriate transparency and, where required, consent before the new use begins.</p>
+
+    <h2>7. Service providers and sharing</h2>
+    <p>PostGuard may use carefully selected service providers acting on our behalf for hosting, databases, transactional email, security, monitoring and other infrastructure needed to operate the service. We limit sharing to what is reasonably necessary for the relevant purpose and expect appropriate contractual and security safeguards.</p>
+    <p>We may also disclose information where required by law, to establish or defend legal claims, or where necessary to protect the security of users or the service and a lawful basis permits the disclosure.</p>
+
+    <h2>8. International transfers</h2>
+    <p>Some service providers may process information outside the UK. Where UK data-protection law requires a transfer safeguard, PostGuard will use an applicable UK transfer mechanism or other lawful safeguard and will provide further information about relevant safeguards on request.</p>
+
+    <h2>9. How long we keep information</h2>
+    <p>Account and customer workspace data is retained while needed to provide an active account, subject to the deletion controls described below and any justified legal requirement. Authentication tokens are short-lived and one-use, and are removed with the account. Security-event records are retained for up to 12 months unless longer retention is genuinely necessary for an active investigation or legal obligation.</p>
+    <p>When an account is deleted, PostGuard deletes customer-controlled database records covered by the account-deletion workflow. Limited security records may remain for the stated security retention period. Deleted information may also remain temporarily in protected backups until it expires under the backup lifecycle. See the <a href="/data-retention">Data Retention Policy</a>.</p>
+
+    <h2>10. Your data-protection rights</h2>
+    <p>Depending on the circumstances and lawful basis, UK data-protection law may give you rights to request access, correction, erasure, restriction, objection and data portability, and to withdraw consent where processing relies on consent. Withdrawal does not affect processing that was lawful before withdrawal.</p>
+    <p><strong>Your right to object:</strong> where PostGuard relies on legitimate interests, you may have the right to object to that processing. You can contact <a href="mailto:security@postguard.uk">security@postguard.uk</a> to exercise applicable rights.</p>
+
+    <h2>11. Marketing</h2>
+    <p>PostGuard marketing is opt-in only. Creating an account does not by itself subscribe you to promotional marketing. Essential service and security messages, such as verification, password-reset and important account/security notices, are separate from marketing.</p>
+
+    <h2>12. Special-category and third-party information</h2>
+    <p>PostGuard is not launching on the basis that it intentionally needs large-scale special-category personal data. Users should avoid submitting unnecessary sensitive information or information about other people. Before PostGuard intentionally introduces processing that requires a special-category condition, it will assess and document the appropriate UK GDPR and Data Protection Act requirements.</p>
+
+    <h2>13. Security</h2>
+    <p>PostGuard uses technical and organisational safeguards designed to protect account information, including password hashing, secure sessions, CSRF protection, rate limiting, email verification, administrator multi-factor authentication and database recovery controls. No internet service can guarantee absolute security.</p>
+
+    <h2>14. Complaints</h2>
+    <p>Please contact <a href="mailto:security@postguard.uk">security@postguard.uk</a> if you have a privacy concern. You also have the right to complain to the UK Information Commissioner's Office (ICO). See <a href="https://ico.org.uk/make-a-complaint/data-protection-complaints/">ICO data-protection complaints guidance</a>.</p>
+
+    <h2>15. Changes to this notice</h2>
+    <p>PostGuard may update this notice as the service changes. Material changes to how personal information is used should be brought to users' attention before the new processing begins where required.</p>
     """
     return render_template_string(LEGAL_PAGE,title="Privacy Notice",body=body)
 
 @app.get("/terms")
 def terms_page():
     body = """
-    <h2>Service purpose</h2>
-    <p>PostGuard is a security-assistance service. Risk scores and recommendations are decision-support and do not guarantee that a post is safe or free from privacy, security, reputational or legal risk.</p>
-    <h2>Authorised use</h2>
-    <p>Users must only submit content and monitor accounts, people or information they are authorised to assess.</p>
-    <h2>Account security</h2>
-    <p>Users are responsible for protecting their credentials and reporting suspected unauthorised access promptly.</p>
-    <h2>Commercial terms</h2>
-    <p>Pricing, liability, governing law, support commitments and service-level terms must be completed and approved before accepting paying customers.</p>
+    <h2>Service purpose</h2><p>PostGuard is a security-assistance and decision-support service. Risk scores and recommendations do not guarantee that a post is safe or free from privacy, security, reputational or legal risk.</p>
+    <h2>Eligibility</h2><p>You must be at least 16 years old to create and use a PostGuard account.</p>
+    <h2>Authorised use</h2><p>Users must only submit content and monitor accounts, people or information they are authorised to assess. Users remain responsible for content they choose to publish.</p>
+    <h2>Account security</h2><p>Users are responsible for protecting their credentials and reporting suspected unauthorised access promptly.</p>
+    <h2>Customer content</h2><p>PostGuard does not claim ownership of customer posts or images. Customer scan content is not used to train AI models under the current service policy.</p>
+    <h2>Commercial terms</h2><p>Pricing, payment, liability, termination, governing law, support commitments and service-level terms require qualified UK legal review before PostGuard accepts paying customers. This launch draft is not a substitute for that review.</p>
     """
     return render_template_string(LEGAL_PAGE,title="Terms of Service",body=body)
 
 @app.get("/data-retention")
-def retention_page():
+def data_retention_page():
     body = """
-    <h2>Current approach</h2>
-    <p>PostGuard retains account, scan, alert, case and audit records needed to provide the service until they are deleted under the product's account-deletion workflow or a future documented retention schedule.</p>
-    <h2>Production requirement</h2>
-    <p>A legally reviewed retention schedule must define retention periods for customer records, security logs, backups and support records before commercial launch.</p>
+    <h2>Account and workspace data</h2><p>Account information, scans, alerts, cases and associated workspace records are kept while needed to provide an active account, unless the user deletes the account or a different legal requirement applies.</p>
+    <h2>Account deletion</h2><p>The account-deletion workflow removes customer-owned alerts, cases, checks, principals/profile records, customer audit records, one-use authentication tokens and the user account. Security-event records are treated separately as security logs.</p>
+    <h2>Security logs</h2><p>Security-event records are retained for up to <strong>12 months</strong> and are automatically pruned as new security events are recorded. A record may be kept longer where genuinely necessary for an active security investigation or legal obligation; production procedures should document any such exception.</p>
+    <h2>Uploaded images</h2><p>The current scan workflow processes uploaded images temporarily and is not designed to retain the uploaded media permanently after analysis. Scan findings and associated database records may remain in the customer's workspace.</p>
+    <h2>Backups</h2><p>Deleted information can remain temporarily in protected database backups until those backups expire under the infrastructure backup lifecycle. PostGuard has production database export and point-in-time recovery capability; backup retention is governed by the configured infrastructure plan.</p>
+    <h2>Review</h2><p>This schedule must be reviewed as PostGuard adds new data categories, social-media integrations, AI providers, support systems or other processors.</p>
     """
-    return render_template_string(LEGAL_PAGE,title="Data Retention",body=body)
+    return render_template_string(LEGAL_PAGE,title="Data Retention Policy",body=body)
 
 # ============================================================
 # HEALTH CHECK
@@ -5348,7 +5412,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="7.2",
+        version="7.4",
     )
 
 
@@ -5372,7 +5436,7 @@ def ready():
     return jsonify(
         status="ready" if ok else "not_ready",
         service="postguard",
-        version="7.2",
+        version="7.4",
         checks=checks,
     ), 200 if ok else 503
 

@@ -40,3 +40,9 @@ Do not set a confirmation flag merely to make /ready green.
 - Integrate and validate an actual image-understanding AI provider.
 - Complete official OAuth/app review/API approval for each social network you intend to publish to.
 
+
+## v7.4 privacy update
+
+PostGuard now includes a substantially expanded UK-focused Privacy Notice and Data Retention Policy matching the agreed launch design, plus deletion handling for one-use authentication tokens and a 12-month security-event retention mechanism.
+
+This does **not** complete the legal-review gate. Keep `POSTGUARD_LEGAL_REVIEW_CONFIRMED=0` until qualified UK legal/privacy counsel has reviewed and approved the documents and the actual processing model.
