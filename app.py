@@ -965,6 +965,197 @@ def caption_scan(text):
 # IMAGE SCANNING
 # ============================================================
 
+
+def google_vision_scan(path):
+    """Analyse an authorised upload with Google Cloud Vision.
+
+    Returns privacy/security findings plus a compact evidence summary.
+    External web matches are treated as OSINT leads, not proof of identity/location.
+    """
+    findings = []
+    evidence = {
+        "visible_text": "",
+        "landmarks": [],
+        "web_entities": [],
+        "matching_pages": [],
+        "full_matches": [],
+        "partial_matches": [],
+        "similar_images": [],
+    }
+
+    try:
+        client = vision.ImageAnnotatorClient()
+
+        with open(path, "rb") as image_file:
+            content = image_file.read()
+
+        image = vision.Image(content=content)
+
+        # OCR: useful for names, schools, addresses, signs, tickets, badges, etc.
+        text_response = client.text_detection(image=image)
+        if text_response.error.message:
+            raise RuntimeError(text_response.error.message)
+
+        annotations = text_response.text_annotations or []
+        visible_text = annotations[0].description.strip() if annotations else ""
+        evidence["visible_text"] = visible_text[:4000]
+
+        if visible_text:
+            _, text_findings = caption_scan(visible_text)
+            for item in text_findings:
+                item = dict(item)
+                item["category"] = "Visible text: " + item["category"]
+                item["detail"] = (
+                    "Observed readable text in the image may expose sensitive information. "
+                    + item["detail"]
+                )
+                findings.append(item)
+
+            # Extra OCR patterns that are especially useful for image privacy review.
+            ocr_rules = [
+                (r"\b[A-Z]{1,2}\d{1,2}\s?\d[A-Z]{2}\b", "Possible UK postcode", "HIGH",
+                 "Observed text resembles a UK postcode and could help identify a location.",
+                 "Blur or remove the postcode and surrounding address information."),
+                (r"\b(?:0|\+44)\s?7\d{3}[\s-]?\d{6}\b", "Possible mobile number", "HIGH",
+                 "Observed text resembles a UK mobile number.",
+                 "Blur or remove the phone number before publishing."),
+                (r"\b[A-Z]{2}\d{2}\s?[A-Z]{3}\b", "Possible vehicle registration", "HIGH",
+                 "Observed text resembles a UK vehicle registration.",
+                 "Blur the registration plate before publishing."),
+                (r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b", "Email address", "HIGH",
+                 "Observed text appears to contain an email address.",
+                 "Blur or remove the email address before publishing."),
+                (r"\b(passport|boarding pass|booking reference|school|academy|college|nursery|"
+                 r"gate code|alarm code|recovery code|sort code|account number|date of birth|dob)\b",
+                 "Sensitive visible text", "HIGH",
+                 "Observed text contains wording associated with personal, school, travel, access or financial information.",
+                 "Review and redact the sensitive text before publishing."),
+            ]
+            for pattern, category, severity, detail, recommendation in ocr_rules:
+                if re.search(pattern, visible_text, re.I):
+                    findings.append({
+                        "category": category,
+                        "detail": detail,
+                        "recommendation": recommendation,
+                        "severity": severity,
+                    })
+
+        # Landmark detection: an observed landmark can make location identification easier.
+        landmark_response = client.landmark_detection(image=image)
+        if landmark_response.error.message:
+            raise RuntimeError(landmark_response.error.message)
+
+        for landmark in (landmark_response.landmark_annotations or [])[:5]:
+            name = (landmark.description or "").strip()
+            confidence = float(landmark.score or 0)
+            if not name:
+                continue
+            evidence["landmarks"].append({
+                "name": name[:200],
+                "confidence": round(confidence, 3),
+            })
+            findings.append({
+                "category": "Recognisable landmark",
+                "detail": (
+                    f'Observed landmark candidate "{name}" '
+                    f"(Google Vision confidence {confidence:.0%}). "
+                    "This may make the image location identifiable."
+                ),
+                "recommendation": (
+                    "Avoid publishing the original image if revealing this location creates "
+                    "a personal-security risk; crop, obscure or use a different image."
+                ),
+                "severity": "HIGH" if confidence >= 0.70 else "MEDIUM",
+            })
+
+        # Web Detection: same/partial/similar public images and web entities.
+        web_response = client.web_detection(
+            image=image,
+            image_context=vision.ImageContext(
+                web_detection_params=vision.WebDetectionParams(include_geo_results=True)
+            ),
+        )
+        if web_response.error.message:
+            raise RuntimeError(web_response.error.message)
+
+        web = web_response.web_detection
+        if web:
+            for entity in (web.web_entities or [])[:10]:
+                description = (entity.description or "").strip()
+                if description:
+                    evidence["web_entities"].append({
+                        "description": description[:200],
+                        "score": round(float(entity.score or 0), 3),
+                    })
+
+            for page in (web.pages_with_matching_images or [])[:10]:
+                if page.url:
+                    evidence["matching_pages"].append(page.url[:1000])
+
+            for match in (web.full_matching_images or [])[:10]:
+                if match.url:
+                    evidence["full_matches"].append(match.url[:1000])
+
+            for match in (web.partial_matching_images or [])[:10]:
+                if match.url:
+                    evidence["partial_matches"].append(match.url[:1000])
+
+            for match in (web.visually_similar_images or [])[:10]:
+                if match.url:
+                    evidence["similar_images"].append(match.url[:1000])
+
+            exactish_count = len(evidence["full_matches"]) + len(evidence["partial_matches"])
+            page_count = len(evidence["matching_pages"])
+
+            if exactish_count or page_count:
+                findings.append({
+                    "category": "External web match / OSINT exposure",
+                    "detail": (
+                        "Externally corroborated: Google Web Detection found public pages or "
+                        "full/partial image matches associated with this upload. These are OSINT "
+                        "leads and do not by themselves prove a person's identity or exact location."
+                    ),
+                    "recommendation": (
+                        "Review the matching public sources before publishing. If they connect the "
+                        "image to a home, school, workplace, routine or current location, use a "
+                        "different image or remove identifying features."
+                    ),
+                    "severity": "HIGH",
+                })
+            elif evidence["similar_images"] or evidence["web_entities"]:
+                findings.append({
+                    "category": "Web similarity / OSINT lead",
+                    "detail": (
+                        "Inferred external context: visually similar images or web entities were "
+                        "returned. This may provide investigators with additional context, but it "
+                        "is not definitive identification."
+                    ),
+                    "recommendation": (
+                        "Review the image for distinctive signs, landmarks, uniforms, property "
+                        "features and other clues before publishing."
+                    ),
+                    "severity": "MEDIUM",
+                })
+
+    except Exception:
+        # Do not expose credentials, API responses or customer image content in logs/UI.
+        app.logger.exception("Google Vision image analysis failed")
+        findings.append({
+            "category": "AI visual inspection unavailable",
+            "detail": (
+                "Google Vision analysis could not be completed for this image. "
+                "The metadata and caption checks can continue, but visual/OSINT coverage is reduced."
+            ),
+            "recommendation": (
+                "Do not treat this scan as a complete visual privacy review. "
+                "Retry the scan or perform a manual security review before publishing."
+            ),
+            "severity": "MEDIUM",
+        })
+
+    return findings, evidence
+
+
 def image_scan(path):
     findings = []
     metadata = {}
@@ -1057,6 +1248,21 @@ def image_scan(path):
                 "severity": "LOW",
             }
         )
+
+    vision_findings, vision_evidence = google_vision_scan(path)
+    findings.extend(vision_findings)
+
+    # Keep the existing two-value image_scan() contract used by /api/scan.
+    # Store only compact evidence; never store credentials or image bytes.
+    metadata["google_vision"] = {
+        "visible_text": vision_evidence.get("visible_text", "")[:2000],
+        "landmarks": vision_evidence.get("landmarks", [])[:5],
+        "web_entities": vision_evidence.get("web_entities", [])[:10],
+        "matching_pages": vision_evidence.get("matching_pages", [])[:5],
+        "full_matches": vision_evidence.get("full_matches", [])[:5],
+        "partial_matches": vision_evidence.get("partial_matches", [])[:5],
+        "similar_images": vision_evidence.get("similar_images", [])[:5],
+    }
 
     return findings, metadata
 
