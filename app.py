@@ -1091,7 +1091,7 @@ def risk(score):
 PLANS = {
     "personal": {
         "name": "PostGuard Personal",
-        "price": "£20",
+        "price": "£49",
         "price_env": "POSTGUARD_STRIPE_PRICE_PERSONAL",
         "strap": "Pre-post protection for your everyday social media activity.",
         "features": [
@@ -1103,7 +1103,7 @@ PLANS = {
     },
     "executive": {
         "name": "PostGuard Executive",
-        "price": "£100",
+        "price": "£199",
         "price_env": "POSTGUARD_STRIPE_PRICE_EXECUTIVE",
         "strap": "Enhanced protection package.",
         "features": [
@@ -1112,7 +1112,7 @@ PLANS = {
     },
     "vip": {
         "name": "PostGuard VIP",
-        "price": "£250",
+        "price": "£300",
         "price_env": "POSTGUARD_STRIPE_PRICE_VIP",
         "strap": "Premium protection package.",
         "features": [
@@ -1126,6 +1126,21 @@ def stripe_configured():
     if not os.getenv("POSTGUARD_STRIPE_SECRET_KEY", "").strip():
         return False
     return all(os.getenv(plan["price_env"], "").strip() for plan in PLANS.values())
+
+
+def free_access_promo_configured():
+    # Keep the actual promo code out of source control. Configure it privately
+    # in Render as POSTGUARD_FREE_ACCESS_CODE. A minimum length makes accidental
+    # weak values less likely.
+    return len(os.getenv("POSTGUARD_FREE_ACCESS_CODE", "").strip()) >= 12
+
+
+def free_access_promo_valid(candidate):
+    configured = os.getenv("POSTGUARD_FREE_ACCESS_CODE", "").strip()
+    candidate = (candidate or "").strip()
+    if len(configured) < 12 or not candidate:
+        return False
+    return hmac.compare_digest(candidate, configured)
 
 
 def stripe_api(method, path, form_data=None):
@@ -1191,7 +1206,7 @@ PAID_SPLASH_PAGE = r"""
 <style>
 :root{color-scheme:dark;--bg:#07101d;--card:#0f1c2e;--line:#263c5c;--text:#f7f9fd;--muted:#9badc6;--blue:#8db3ff;--green:#8de6b7}
 *{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at 15% 10%,rgba(66,113,205,.18),transparent 28%),#07101d;color:var(--text);font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif}
-.wrap{min-height:100vh;max-width:1220px;margin:auto;padding:44px 24px 64px}.top{display:flex;align-items:center;justify-content:space-between;gap:24px}.brand{display:flex;align-items:center;gap:14px;font-weight:900;letter-spacing:.04em}.brand img{width:62px;height:62px;object-fit:cover;border-radius:50%;border:1px solid #355987}.login{color:#dce7fb;text-decoration:none;border:1px solid #345071;padding:10px 16px;border-radius:10px}.hero{text-align:center;max-width:780px;margin:54px auto 38px}.hero img{width:160px;height:160px;object-fit:cover;border-radius:50%;border:1px solid #355987;box-shadow:0 20px 60px rgba(0,0,0,.35)}.eyebrow{margin-top:20px;color:var(--blue);font-size:.78rem;font-weight:850;text-transform:uppercase;letter-spacing:.16em}h1{font-size:clamp(2.4rem,5vw,4.6rem);line-height:1;margin:13px 0 18px;letter-spacing:-.05em}.hero p{color:#b7c5d8;line-height:1.7;font-size:1.05rem}.notice{max-width:760px;margin:0 auto 28px;padding:13px 16px;border:1px solid #40536e;background:#101b2b;border-radius:12px;color:#c9d5e6;text-align:center}.cancel{border-color:#70444b;background:#281a20;color:#ffd7da}.demo{max-width:760px;margin:0 auto 30px;background:linear-gradient(135deg,#132a24,#0d1d1a);border:1px solid #2f745a;border-radius:20px;padding:24px;text-align:center;box-shadow:0 18px 50px rgba(0,0,0,.18)}.demo h2{margin:0 0 8px}.demo p{color:#b9d9cb;line-height:1.55}.demo .free{font-size:2rem;font-weight:900;margin:8px 0}.demo .buy{max-width:360px}.plans{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}.plan{position:relative;background:linear-gradient(180deg,#122137,#0c1727);border:1px solid var(--line);border-radius:20px;padding:26px;box-shadow:0 18px 50px rgba(0,0,0,.2)}.plan.featured{border-color:#6a91d3;transform:translateY(-6px)}.tag{position:absolute;top:16px;right:16px;background:#1d3b67;color:#cfe0ff;padding:6px 9px;border-radius:999px;font-size:.7rem;font-weight:800}.plan h2{margin:0 0 8px;font-size:1.35rem}.strap{color:var(--muted);min-height:44px;font-size:.9rem;line-height:1.5}.price{font-size:2.45rem;font-weight:900;margin:18px 0 2px;letter-spacing:-.04em}.per{color:var(--muted);font-size:.85rem}.features{list-style:none;padding:0;margin:22px 0}.features li{padding:8px 0;color:#c9d5e5;font-size:.88rem}.features li:before{content:"✓";color:var(--green);font-weight:900;margin-right:9px}.buy{width:100%;border:0;border-radius:11px;padding:13px 15px;font-weight:900;background:linear-gradient(135deg,#eef4ff,#b9d0fb);color:#07101d;cursor:pointer}.buy:disabled{opacity:.5;cursor:not-allowed}.small{margin:26px auto 0;max-width:830px;text-align:center;color:#778ba6;font-size:.78rem;line-height:1.6}.small a{color:#a9c8ff}.flash{max-width:760px;margin:0 auto 20px;border:1px solid #6b464d;background:#2a1b21;color:#ffd9dc;border-radius:12px;padding:12px 14px;text-align:center}@media(max-width:900px){.plans{grid-template-columns:1fr}.plan.featured{transform:none}.top{align-items:flex-start}.hero{margin-top:38px}}
+.wrap{min-height:100vh;max-width:1220px;margin:auto;padding:44px 24px 64px}.top{display:flex;align-items:center;justify-content:space-between;gap:24px}.brand{display:flex;align-items:center;gap:14px;font-weight:900;letter-spacing:.04em}.brand img{width:62px;height:62px;object-fit:cover;border-radius:50%;border:1px solid #355987}.login{color:#dce7fb;text-decoration:none;border:1px solid #345071;padding:10px 16px;border-radius:10px}.hero{text-align:center;max-width:780px;margin:54px auto 38px}.hero img{width:160px;height:160px;object-fit:cover;border-radius:50%;border:1px solid #355987;box-shadow:0 20px 60px rgba(0,0,0,.35)}.eyebrow{margin-top:20px;color:var(--blue);font-size:.78rem;font-weight:850;text-transform:uppercase;letter-spacing:.16em}h1{font-size:clamp(2.4rem,5vw,4.6rem);line-height:1;margin:13px 0 18px;letter-spacing:-.05em}.hero p{color:#b7c5d8;line-height:1.7;font-size:1.05rem}.notice{max-width:760px;margin:0 auto 28px;padding:13px 16px;border:1px solid #40536e;background:#101b2b;border-radius:12px;color:#c9d5e6;text-align:center}.cancel{border-color:#70444b;background:#281a20;color:#ffd7da}.demo{max-width:760px;margin:0 auto 30px;background:linear-gradient(135deg,#132a24,#0d1d1a);border:1px solid #2f745a;border-radius:20px;padding:24px;text-align:center;box-shadow:0 18px 50px rgba(0,0,0,.18)}.demo h2{margin:0 0 8px}.demo p{color:#b9d9cb;line-height:1.55}.demo .free{font-size:2rem;font-weight:900;margin:8px 0}.demo .buy{max-width:360px}.plans{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}.plan{position:relative;background:linear-gradient(180deg,#122137,#0c1727);border:1px solid var(--line);border-radius:20px;padding:26px;box-shadow:0 18px 50px rgba(0,0,0,.2)}.plan.featured{border-color:#6a91d3;transform:translateY(-6px)}.tag{position:absolute;top:16px;right:16px;background:#1d3b67;color:#cfe0ff;padding:6px 9px;border-radius:999px;font-size:.7rem;font-weight:800}.plan h2{margin:0 0 8px;font-size:1.35rem}.strap{color:var(--muted);min-height:44px;font-size:.9rem;line-height:1.5}.price{font-size:2.45rem;font-weight:900;margin:18px 0 2px;letter-spacing:-.04em}.per{color:var(--muted);font-size:.85rem}.features{list-style:none;padding:0;margin:22px 0}.features li{padding:8px 0;color:#c9d5e5;font-size:.88rem}.features li:before{content:"✓";color:var(--green);font-weight:900;margin-right:9px}.buy{width:100%;border:0;border-radius:11px;padding:13px 15px;font-weight:900;background:linear-gradient(135deg,#eef4ff,#b9d0fb);color:#07101d;cursor:pointer}.buy:disabled{opacity:.5;cursor:not-allowed}.small{margin:26px auto 0;max-width:830px;text-align:center;color:#778ba6;font-size:.78rem;line-height:1.6}.small a{color:#a9c8ff}.promo{max-width:760px;margin:30px auto 0;padding:22px;border:1px solid #40536e;background:#0d1929;border-radius:18px;text-align:center}.promo h2{margin:0 0 8px}.promo p{color:#aebed3;line-height:1.55}.promo form{display:flex;gap:10px;max-width:560px;margin:16px auto 0}.promo input{flex:1;min-width:0;border:1px solid #355071;background:#081220;color:#f7f9fd;border-radius:10px;padding:13px 14px}.promo button{border:0;border-radius:10px;padding:13px 18px;font-weight:900;background:#dce8ff;color:#07101d;cursor:pointer}.promo .muted{font-size:.8rem;color:#7f92ad}@media(max-width:620px){.promo form{flex-direction:column}}.flash{max-width:760px;margin:0 auto 20px;border:1px solid #6b464d;background:#2a1b21;color:#ffd9dc;border-radius:12px;padding:12px 14px;text-align:center}@media(max-width:900px){.plans{grid-template-columns:1fr}.plan.featured{transform:none}.top{align-items:flex-start}.hero{margin-top:38px}}
 </style>
 </head>
 <body><div class="wrap">
@@ -1206,6 +1221,18 @@ PAID_SPLASH_PAGE = r"""
 <div class="plan {% if key == 'executive' %}featured{% endif %}">{% if key == 'executive' %}<div class="tag">POPULAR</div>{% endif %}<h2>{{ plan.name }}</h2><div class="strap">{{ plan.strap }}</div><div class="price">7 days free</div><div class="per">then {{ plan.price }}/month · recurring subscription</div><ul class="features">{% for item in plan.features %}<li>{{ item }}</li>{% endfor %}</ul><form method="post" action="{{ url_for('start_checkout', plan_key=key) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="buy" {% if not payments_ready %}disabled{% endif %}>Start 7-day free trial</button></form></div>
 {% endfor %}
 </div>
+{% if promo_ready %}
+<div class="promo">
+<h2>Free-access promo code</h2>
+<p>If PostGuard has issued you a complimentary-access code, enter it below. A valid code unlocks registration without Stripe or a payment card.</p>
+<form method="post" action="{{ url_for('redeem_free_access_promo') }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<input type="password" name="promo_code" autocomplete="off" required placeholder="Enter promo code" aria-label="Free-access promo code">
+<button type="submit">Apply code</button>
+</form>
+<div class="muted">Promo access is complimentary and does not automatically create a paid recurring subscription.</div>
+</div>
+{% endif %}
 <div class="small">PostGuard provides security and privacy decision support. The final decision to publish content remains with the user. A payment method is required for the 7-day free trial. Unless cancelled before the trial ends, the selected plan is charged at the displayed monthly price and renews automatically each month until cancelled. See the <a href="{{ url_for('terms_page') }}">Terms</a> and <a href="{{ url_for('privacy_page') }}">Privacy Notice</a>.</div>
 </div></body></html>
 """
@@ -1215,7 +1242,7 @@ PAID_SPLASH_PAGE = r"""
 def join_postguard():
     if "uid" in session:
         return redirect(url_for("home"))
-    return render_template_string(PAID_SPLASH_PAGE, plans=PLANS, payments_ready=stripe_configured())
+    return render_template_string(PAID_SPLASH_PAGE, plans=PLANS, payments_ready=stripe_configured(), promo_ready=free_access_promo_configured())
 
 
 @app.post("/demo/start")
@@ -1229,6 +1256,31 @@ def start_demo():
     session.pop("paid_checkout_at", None)
     session["demo_registration"] = True
     session["demo_registration_at"] = int(time.time())
+    return redirect(url_for("register"))
+
+
+@app.post("/promo/redeem")
+@limiter.limit("5 per minute")
+def redeem_free_access_promo():
+    if "uid" in session:
+        return redirect(url_for("home"))
+
+    # Use one generic failure message so the endpoint does not reveal whether
+    # promo access is configured. Never log the submitted code.
+    if not free_access_promo_valid(request.form.get("promo_code", "")):
+        flash("That promo code could not be accepted.")
+        return redirect(url_for("join_postguard"))
+
+    # Promo registration is deliberately separate from Stripe and demo state.
+    for key in (
+        "paid_checkout_session_id", "paid_checkout_email", "paid_plan",
+        "paid_trial_ends_at", "paid_subscription_status", "paid_checkout_at",
+        "demo_registration", "demo_registration_at"
+    ):
+        session.pop(key, None)
+    session["promo_registration"] = True
+    session["promo_registration_at"] = int(time.time())
+    flash("Promo code accepted. Create your PostGuard account to activate complimentary access.")
     return redirect(url_for("register"))
 
 
@@ -1700,14 +1752,17 @@ def register():
     paid_checkout_at = int(session.get("paid_checkout_at", 0) or 0)
     demo_mode = bool(session.get("demo_registration"))
     demo_registration_at = int(session.get("demo_registration_at", 0) or 0)
+    promo_mode = bool(session.get("promo_registration"))
+    promo_registration_at = int(session.get("promo_registration_at", 0) or 0)
 
     paid_mode = bool(
         paid_checkout_session_id and paid_checkout_email and paid_plan in PLANS
         and paid_checkout_at and time.time() - paid_checkout_at <= 3600
     )
     demo_mode = bool(demo_mode and demo_registration_at and time.time() - demo_registration_at <= 3600)
+    promo_mode = bool(promo_mode and promo_registration_at and time.time() - promo_registration_at <= 3600)
 
-    if not paid_mode and not demo_mode:
+    if not paid_mode and not demo_mode and not promo_mode:
         session.pop("paid_checkout_session_id", None)
         session.pop("paid_checkout_email", None)
         session.pop("paid_plan", None)
@@ -1716,7 +1771,9 @@ def register():
         session.pop("paid_checkout_at", None)
         session.pop("demo_registration", None)
         session.pop("demo_registration_at", None)
-        flash("Choose a paid plan or start the 7-day free demo before registering.")
+        session.pop("promo_registration", None)
+        session.pop("promo_registration_at", None)
+        flash("Choose a paid plan or use an authorised PostGuard access offer before registering.")
         return redirect(url_for("join_postguard"))
 
     paid_row = None
@@ -1739,7 +1796,7 @@ def register():
 
         if not email:
             flash("Email address is required.")
-            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan] if paid_mode else None, demo_mode=demo_mode)
+            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan] if paid_mode else None, demo_mode=demo_mode, promo_mode=promo_mode)
 
         email_pattern = (
             r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+"
@@ -1749,19 +1806,19 @@ def register():
 
         if not re.match(email_pattern, email):
             flash("Enter a valid email address.")
-            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan] if paid_mode else None, demo_mode=demo_mode)
+            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan] if paid_mode else None, demo_mode=demo_mode, promo_mode=promo_mode)
 
         if not password:
             flash("Password is required.")
-            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan] if paid_mode else None, demo_mode=demo_mode)
+            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan] if paid_mode else None, demo_mode=demo_mode, promo_mode=promo_mode)
 
         if password != confirm:
             flash("Passwords do not match.")
-            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan] if paid_mode else None, demo_mode=demo_mode)
+            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan] if paid_mode else None, demo_mode=demo_mode, promo_mode=promo_mode)
 
         if len(password) < 12:
             flash("Password must be at least 12 characters.")
-            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan] if paid_mode else None, demo_mode=demo_mode)
+            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan] if paid_mode else None, demo_mode=demo_mode, promo_mode=promo_mode)
 
         c = db()
         existing = c.execute(
@@ -1772,14 +1829,14 @@ def register():
         if existing:
             c.close()
             flash("An account with that email already exists.")
-            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan] if paid_mode else None, demo_mode=demo_mode)
+            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan] if paid_mode else None, demo_mode=demo_mode, promo_mode=promo_mode)
 
         if demo_mode:
             previous_demo = c.execute("SELECT email FROM demo_trials WHERE email=?", (email,)).fetchone()
             if previous_demo:
                 c.close()
                 flash("A 7-day PostGuard demo has already been used with this email address. Choose a paid plan to continue.")
-                return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email="", paid_plan=None, demo_mode=True)
+                return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email="", paid_plan=None, demo_mode=True, promo_mode=False)
 
         try:
             user = c.execute(
@@ -1798,12 +1855,12 @@ def register():
                     "user",
                     now(),
                     0,
-                    paid_plan if paid_mode else "demo",
-                    paid_subscription_status if paid_mode else "trialing",
+                    paid_plan if paid_mode else ("promo" if promo_mode else "demo"),
+                    paid_subscription_status if paid_mode else ("active" if promo_mode else "trialing"),
                     paid_row["stripe_customer_id"] if paid_mode else None,
                     paid_row["stripe_subscription_id"] if paid_mode else None,
                     paid_checkout_session_id if paid_mode else None,
-                    paid_trial_ends_at if paid_mode else (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+                    paid_trial_ends_at if paid_mode else (None if promo_mode else (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()),
                 ),
             ).fetchone()
         except (psycopg.errors.UniqueViolation, sqlite3.IntegrityError):
@@ -1813,7 +1870,7 @@ def register():
             c.rollback()
             c.close()
             flash("An account with that email already exists.")
-            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan] if paid_mode else None, demo_mode=demo_mode)
+            return render_template_string(AUTH_ENTRY_PAGE, mode="register", paid_email=paid_checkout_email, paid_plan=PLANS[paid_plan] if paid_mode else None, demo_mode=demo_mode, promo_mode=promo_mode)
 
         user_id = user["id"]
 
@@ -1845,7 +1902,7 @@ def register():
                 "UPDATE paid_checkouts SET consumed_at=?, user_id=? WHERE checkout_session_id=? AND consumed_at IS NULL",
                 (now(), user_id, paid_checkout_session_id),
             )
-        else:
+        elif demo_mode:
             trial_started = datetime.now(timezone.utc)
             trial_expires = trial_started + timedelta(days=7)
             c.execute(
@@ -1861,12 +1918,14 @@ def register():
             user_id,
         )
 
-        plan_name = PLANS[paid_plan]["name"] if paid_mode else "PostGuard 7-Day Free Demo"
+        plan_name = PLANS[paid_plan]["name"] if paid_mode else ("PostGuard Complimentary Access" if promo_mode else "PostGuard 7-Day Free Demo")
         plan_price = PLANS[paid_plan]["price"] if paid_mode else "£0"
         admin_email = os.getenv("POSTGUARD_ADMIN_EMAIL", "").strip().lower()
         try:
             if paid_mode:
                 welcome_detail = f"Your 7-day free trial for {plan_name} is active. A payment method is on file. Unless you cancel before the trial ends, {plan_price}/month will be charged automatically and the subscription will continue monthly until cancelled. You can manage or cancel your subscription from My Account.\n"
+            elif promo_mode:
+                welcome_detail = "Your complimentary PostGuard access has been activated using an authorised promo code. No payment card is linked and this promo access does not automatically renew into a paid subscription.\n"
             else:
                 welcome_detail = "Your 7-day free PostGuard demo has started. No payment has been taken. After 7 days, choose a paid plan to continue using the service.\n"
             send_email(
@@ -1908,6 +1967,8 @@ def register():
         session.pop("paid_checkout_at", None)
         session.pop("demo_registration", None)
         session.pop("demo_registration_at", None)
+        session.pop("promo_registration", None)
+        session.pop("promo_registration_at", None)
         return redirect(url_for("login"))
 
     return render_template_string(
@@ -1916,6 +1977,7 @@ def register():
         paid_email=paid_checkout_email if paid_mode else "",
         paid_plan=PLANS[paid_plan] if paid_mode else None,
         demo_mode=demo_mode,
+        promo_mode=promo_mode,
     )
 
 
@@ -2804,7 +2866,7 @@ tr:last-child td{border-bottom:0}
 def home():
     # Public visitors see pricing first. Existing authenticated users keep their dashboard.
     if "uid" not in session:
-        return render_template_string(PAID_SPLASH_PAGE, plans=PLANS, payments_ready=stripe_configured())
+        return render_template_string(PAID_SPLASH_PAGE, plans=PLANS, payments_ready=stripe_configured(), promo_ready=free_access_promo_configured())
 
     c = db()
 
@@ -5331,7 +5393,7 @@ main{width:min(760px,calc(100% - 32px));margin:40px auto}.card{background:#151c2
 {% with messages=get_flashed_messages() %}{% if messages %}{% for m in messages %}<div class="flash">{{ m }}</div>{% endfor %}{% endif %}{% endwith %}
 <div class="card"><h2>Account details</h2><p><strong>Email:</strong> {{ user["email"] }}</p><p><strong>Account type:</strong> {{ user["role"] or "user" }}</p><p><strong>Registered:</strong> {{ user["created_at"] or "—" }}</p>
 <p><a href="{{ url_for('privacy_page') }}">Privacy Notice</a> · <a href="{{ url_for('data_retention_page') }}">Data Retention</a> · <a href="{{ url_for('terms_page') }}">Terms of Service</a></p></div>
-{% if user["role"] != "admin" %}<div class="card"><h2>Subscription</h2><p><strong>Plan:</strong> {{ user["subscription_plan"] or "—" }}</p><p><strong>Status:</strong> {{ user["subscription_status"] or "—" }}</p>{% if user["trial_ends_at"] %}<p><strong>Trial ends:</strong> {{ user["trial_ends_at"] }}</p>{% endif %}<p class="muted">Your selected plan automatically renews monthly after the 7-day free trial unless you cancel before the trial ends.</p>{% if user["stripe_customer_id"] %}<form method="post" action="{{ url_for('billing_portal') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn" type="submit">Manage or cancel subscription</button></form>{% endif %}</div>{% endif %}
+{% if user["role"] != "admin" %}<div class="card"><h2>Subscription</h2><p><strong>Plan:</strong> {{ user["subscription_plan"] or "—" }}</p><p><strong>Status:</strong> {{ user["subscription_status"] or "—" }}</p>{% if user["trial_ends_at"] %}<p><strong>Trial ends:</strong> {{ user["trial_ends_at"] }}</p>{% endif %}{% if user["subscription_plan"] == "promo" %}<p class="muted">Complimentary promo access. No recurring Stripe subscription is attached to this access.</p>{% else %}<p class="muted">Your selected plan automatically renews monthly after the 7-day free trial unless you cancel before the trial ends.</p>{% endif %}{% if user["stripe_customer_id"] %}<form method="post" action="{{ url_for('billing_portal') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn" type="submit">Manage or cancel subscription</button></form>{% endif %}</div>{% endif %}
 <div class="card"><h2>Change password</h2>
 <form method="post" action="{{ url_for('account_change_password') }}">
 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -5931,7 +5993,7 @@ def terms_page():
     <p>Nothing in these Terms excludes or limits liability that cannot lawfully be excluded or limited, or affects applicable consumer statutory rights, including rights concerning services supplied with reasonable care and skill.</p>
 
     <h2>11. Plans, prices and payment</h2>
-    <table><tr><th>Plan</th><th>Monthly price</th></tr><tr><td>PostGuard Personal</td><td>£20/month</td></tr><tr><td>PostGuard Executive</td><td>£100/month</td></tr><tr><td>PostGuard VIP</td><td>£250/month</td></tr></table>
+    <table><tr><th>Plan</th><th>Monthly price</th></tr><tr><td>PostGuard Personal</td><td>£49/month</td></tr><tr><td>PostGuard Executive</td><td>£199/month</td></tr><tr><td>PostGuard VIP</td><td>£300/month</td></tr></table>
     <p><strong>7-day free trial:</strong> A payment method is required. Unless you cancel before the 7-day trial ends, the selected monthly fee is charged automatically and the subscription continues to renew monthly until cancelled. You can manage or cancel your subscription through the account billing portal.</p>
     <p>The features included in each plan are those clearly displayed at the point of purchase. Before a paid subscription is created, PostGuard will display the price, billing period and applicable renewal and cancellation information. Recurring subscriptions may automatically renew where this is clearly disclosed and agreed. PostGuard will not introduce hidden charges. Material price changes affecting an existing subscription will be communicated in advance where required. Applicable UK consumer cancellation, refund and cooling-off rights will be respected. Cancelling a paid subscription and deleting a PostGuard account are separate actions.</p>
 
