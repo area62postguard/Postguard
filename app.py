@@ -1564,6 +1564,7 @@ def image_scan(path):
         "full_matches": vision_evidence.get("full_matches", [])[:5],
         "partial_matches": vision_evidence.get("partial_matches", [])[:5],
         "similar_images": vision_evidence.get("similar_images", [])[:5],
+        "page_intelligence": vision_evidence.get("page_intelligence", [])[:3],
     }
 
     return findings, metadata
