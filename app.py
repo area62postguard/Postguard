@@ -1193,7 +1193,7 @@ input::placeholder{color:#61748f}
                 </div>
                 <div class="point">
                     <strong>Clear security decisions</strong>
-                    <span>Get simple SAFE TO POST or DO NOT POST guidance.</span>
+                    <span>Get clear LOW RISK or DO NOT POST guidance.</span>
                 </div>
                 <div class="point">
                     <strong>Private by design</strong>
@@ -2925,7 +2925,7 @@ form.addEventListener("submit", async (event) => {
             decisionEl.style.background = "rgba(180,120,20,.12)";
         } else {
             summaryEl.textContent = "No major exposure was detected by the current PostGuard checks.";
-            decisionTitle.textContent = "🟢 SAFE TO POST";
+            decisionTitle.textContent = "🟢 LOW RISK — NO SIGNIFICANT RISKS DETECTED";
             decisionText.textContent = "No major security or privacy exposure was detected by the current PostGuard checks.";
             decisionEl.style.borderColor = "#4caf7d";
             decisionEl.style.background = "rgba(35,145,90,.12)";
@@ -3134,7 +3134,7 @@ a{color:inherit}.main{max-width:1000px;margin:auto;padding:30px 20px}
         <div class="decision warn">🟠 REVIEW BEFORE POSTING</div>
         <p class="muted">Review the findings before publishing.</p>
     {% else %}
-        <div class="decision safe">🟢 SAFE TO POST</div>
+        <div class="decision safe">🟢 LOW RISK — NO SIGNIFICANT RISKS DETECTED</div>
         <p class="muted">No major exposure was detected by the current PostGuard checks.</p>
     {% endif %}
 </section>
@@ -3161,7 +3161,7 @@ a{color:inherit}.main{max-width:1000px;margin:auto;padding:30px 20px}
         {% elif safer_check['risk'] == 'MODERATE' %}
             <div class="warn" style="margin-top:8px;font-weight:800">🟠 REVIEW BEFORE POSTING</div>
         {% else %}
-            <div class="safe" style="margin-top:8px;font-weight:800">🟢 SAFE TO POST</div>
+            <div class="safe" style="margin-top:8px;font-weight:800">🟢 LOW RISK — NO SIGNIFICANT RISKS DETECTED</div>
         {% endif %}
         <div class="muted" style="margin-top:8px">Re-scanned {{ safer_check['created_at'] }}</div>
     </div>
@@ -3857,7 +3857,7 @@ a{color:inherit}.main{max-width:1000px;margin:auto;padding:30px 20px}
         {% elif safer_check['risk'] == 'MODERATE' %}
             <div class="warn" style="margin-top:7px;font-weight:800">🟠 REVIEW BEFORE POSTING</div>
         {% else %}
-            <div class="safe" style="margin-top:7px;font-weight:800">🟢 SAFE TO POST</div>
+            <div class="safe" style="margin-top:7px;font-weight:800">🟢 LOW RISK — NO SIGNIFICANT RISKS DETECTED</div>
         {% endif %}
     </div>
     {% endif %}
@@ -5341,7 +5341,7 @@ def privacy_page():
     <p>Where PostGuard relies on legitimate interests, the interests include protecting customers, maintaining the integrity and security of the service, preventing misuse and investigating security incidents. PostGuard should document the relevant balancing assessment for production processing.</p>
 
     <h2>5. Post checks, risk scoring and automated processing</h2>
-    <p>PostGuard automatically analyses submitted content and may generate a risk score, findings, recommendations and a publishing decision such as SAFE TO POST, REVIEW BEFORE POSTING or DO NOT POST. The current service is a decision-support tool: a low-risk result is not a guarantee that content is safe, and the user remains responsible for deciding whether to publish.</p>
+    <p>PostGuard automatically analyses submitted content and may generate a risk score, findings, recommendations and a publishing decision such as LOW RISK — NO SIGNIFICANT RISKS DETECTED, REVIEW BEFORE POSTING or DO NOT POST. The current service is a decision-support tool: a low-risk result is not a guarantee that content is safe, and the user remains responsible for deciding whether to publish.</p>
     <p>PostGuard does not currently intend these risk recommendations to make legal or similarly significant decisions about a person. If the product changes so that automated processing has legal or similarly significant effects, PostGuard will reassess the applicable safeguards and privacy information before that use begins.</p>
 
     <h2>6. Images, posts and AI training</h2>
@@ -5382,12 +5382,52 @@ def privacy_page():
 @app.get("/terms")
 def terms_page():
     body = """
-    <h2>Service purpose</h2><p>PostGuard is a security-assistance and decision-support service. Risk scores and recommendations do not guarantee that a post is safe or free from privacy, security, reputational or legal risk.</p>
-    <h2>Eligibility</h2><p>You must be at least 16 years old to create and use a PostGuard account.</p>
-    <h2>Authorised use</h2><p>Users must only submit content and monitor accounts, people or information they are authorised to assess. Users remain responsible for content they choose to publish.</p>
-    <h2>Account security</h2><p>Users are responsible for protecting their credentials and reporting suspected unauthorised access promptly.</p>
-    <h2>Customer content</h2><p>PostGuard does not claim ownership of customer posts or images. Customer scan content is not used to train AI models under the current service policy.</p>
-    <h2>Commercial terms</h2><p>Pricing, payment, liability, termination, governing law, support commitments and service-level terms require qualified UK legal review before PostGuard accepts paying customers. This launch draft is not a substitute for that review.</p>
+    <p><strong>Effective date: 4 September 2026.</strong> These Terms are a launch draft and should receive qualified UK legal review before PostGuard accepts paying customers.</p>
+
+    <h2>1. About PostGuard and these Terms</h2>
+    <p>PostGuard is currently operated as a pre-incorporation business in the United Kingdom. Website: www.postguard.uk. These Terms govern access to and use of the PostGuard service. You must be at least 16 years old to create and use a PostGuard account.</p>
+
+    <h2>2. Service purpose and advisory nature</h2>
+    <p>PostGuard analyses content supplied by users to identify potential privacy, personal-security and information-disclosure risks. Risk scores, warnings, alerts, recommendations, safer-post suggestions and publishing guidance are decision-support tools only. They are not legal advice, law-enforcement advice, approval of content, or a guarantee that content is safe, lawful or free from risk.</p>
+    <p><strong>The final decision whether to create, publish, share, repost or otherwise make content available online remains with the user.</strong> A LOW RISK result or an absence of warnings does not mean PostGuard has approved the content or guaranteed that publication will have no adverse consequences.</p>
+
+    <h2>3. User responsibility</h2>
+    <p>Users are responsible for the content they choose to publish and for ensuring that their use of social-media platforms and published content complies with applicable law, regulations, third-party rights and platform rules. To the extent permitted by law, PostGuard is not responsible for criminal proceedings, civil claims, reputational consequences, platform enforcement or other consequences arising solely from content a user chooses to publish where those consequences were not caused by PostGuard's breach of its legal obligations.</p>
+
+    <h2>4. Acceptable use</h2>
+    <p>You must not use PostGuard to commit, encourage or facilitate unlawful activity; threaten, harass, stalk or deliberately endanger another person; impersonate or defraud another person; violate privacy or intellectual-property rights; submit content you have no lawful right to provide; interfere with, attack, reverse-engineer or abuse the service; or attempt to bypass PostGuard security, account controls or access restrictions, except where applicable law provides a right that cannot lawfully be restricted.</p>
+
+    <h2>5. Account security</h2>
+    <p>You must keep your credentials confidential, provide accurate account information, avoid sharing access with unauthorised people, and promptly report suspected compromise to <a href="mailto:security@postguard.uk">security@postguard.uk</a>. PostGuard remains responsible for taking reasonable measures to secure its own systems.</p>
+
+    <h2>6. Your content</h2>
+    <p>You retain ownership of posts, captions, photographs, images and other content you submit. PostGuard does not claim ownership of your content. You give PostGuard only the limited permission reasonably necessary to receive, store, process and analyse that content to provide and secure the service. Customer posts, images and scan content are not used to train AI models under PostGuard's current policy. You are responsible for having the rights or permission necessary to submit content, including content concerning another person.</p>
+
+    <h2>7. PostGuard intellectual property</h2>
+    <p>PostGuard retains its rights in its software and source code, name, branding and logos, website and interface design, security-analysis and risk-scoring systems, reports, templates, documentation, proprietary methods and technology. While your account is active, you receive a limited, non-exclusive, non-transferable right to use the service for its intended purpose. You may not copy, resell, sublicense, reverse-engineer or commercially exploit PostGuard except where applicable law provides a right that cannot lawfully be restricted.</p>
+
+    <h2>8. Availability and service changes</h2>
+    <p>PostGuard aims to provide a reliable and secure service but does not guarantee uninterrupted, error-free or continuously available access. Maintenance, security work, technical faults, third-party infrastructure failures or circumstances outside PostGuard's reasonable control may cause interruptions. PostGuard may reasonably update features for security, functionality, legal compliance or operation of the service. Where a change materially disadvantages a paying customer, reasonable notice will be provided where practicable and applicable consumer rights will be respected.</p>
+
+    <h2>9. Suspension and termination</h2>
+    <p>PostGuard may restrict or suspend an account where reasonably necessary to investigate compromise, protect users or the service, prevent unlawful activity, comply with legal obligations or address a material breach. Less serious breaches should normally receive notice and a reasonable opportunity to be corrected where appropriate. Serious security threats, fraud, unlawful activity or repeated material breaches may justify immediate suspension or termination. Customers may close their account using the account-deletion facility. Deletion and retention follow the Privacy Notice and Data Retention Policy.</p>
+
+    <h2>10. Liability</h2>
+    <p>PostGuard is a security and privacy decision-support service. It is not responsible for risks it could not reasonably identify from the information supplied. The user remains responsible for the final publishing decision. To the extent permitted by law, PostGuard is not responsible for criminal proceedings, civil claims, reputational damage, social-media enforcement or other consequences arising from a user's publishing decision, except to the extent a loss was caused by PostGuard's breach of a legal obligation or another liability that cannot lawfully be excluded.</p>
+    <p>Nothing in these Terms excludes or limits liability that cannot lawfully be excluded or limited, or affects applicable consumer statutory rights, including rights concerning services supplied with reasonable care and skill.</p>
+
+    <h2>11. Plans, prices and payment</h2>
+    <table><tr><th>Plan</th><th>Monthly price</th></tr><tr><td>PostGuard Personal</td><td>£49/month</td></tr><tr><td>PostGuard Executive</td><td>£199/month</td></tr><tr><td>PostGuard VIP</td><td>£400/month</td></tr></table>
+    <p>The features included in each plan are those clearly displayed at the point of purchase. Before a paid subscription is created, PostGuard will display the price, billing period and applicable renewal and cancellation information. Recurring subscriptions may automatically renew where this is clearly disclosed and agreed. PostGuard will not introduce hidden charges. Material price changes affecting an existing subscription will be communicated in advance where required. Applicable UK consumer cancellation, refund and cooling-off rights will be respected. Cancelling a paid subscription and deleting a PostGuard account are separate actions.</p>
+
+    <h2>12. Governing law and disputes</h2>
+    <p>These Terms are governed by the law of England and Wales, subject to any mandatory consumer protections and rights that apply based on where a customer lives. Customers are encouraged to contact <a href="mailto:security@postguard.uk">security@postguard.uk</a> so PostGuard has an opportunity to resolve a dispute, without removing the customer's right to pursue a claim or other remedy.</p>
+
+    <h2>13. Changes to these Terms</h2>
+    <p>PostGuard may update these Terms where reasonably necessary because of changes to the service, security requirements, applicable law, regulatory requirements or business operations. Where a change materially affects existing customers' rights or obligations, PostGuard will provide reasonable advance notice where practicable, for example by email or an in-service notice. The current version and effective date will remain available on the website. Where applicable law requires explicit consent or provides cancellation rights, those requirements will be respected.</p>
+
+    <h2>14. Contact</h2>
+    <p>Questions about these Terms or security concerns can be sent to <a href="mailto:security@postguard.uk">security@postguard.uk</a>.</p>
     """
     return render_template_string(LEGAL_PAGE,title="Terms of Service",body=body)
 
@@ -5412,7 +5452,7 @@ def health():
     return jsonify(
         status="ok",
         service="postguard",
-        version="7.4",
+        version="7.5",
     )
 
 
@@ -5436,7 +5476,7 @@ def ready():
     return jsonify(
         status="ready" if ok else "not_ready",
         service="postguard",
-        version="7.4",
+        version="7.5",
         checks=checks,
     ), 200 if ok else 503
 
