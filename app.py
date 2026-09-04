@@ -341,6 +341,7 @@ def init():
     ensure_column("checks", "caption", "TEXT")
     ensure_column("checks", "safer_caption", "TEXT")
     ensure_column("checks", "safer_check_id", "INTEGER")
+    ensure_column("checks", "image_analysis", "TEXT")
     ensure_column("alerts", "check_id", "INTEGER")
     ensure_column("alerts", "risk_score", "INTEGER")
     ensure_column("alerts", "caption", "TEXT")
@@ -3794,6 +3795,105 @@ def check_post():
 
 
 
+
+def _vision_report_from_check(check, findings):
+    """Build a user-facing OSINT report from stored scan evidence."""
+    try:
+        vision_data = json.loads(check["image_analysis"] or "{}")
+        if not isinstance(vision_data, dict):
+            vision_data = {}
+    except (TypeError, ValueError, json.JSONDecodeError, KeyError):
+        vision_data = {}
+
+    observed = []
+    inferred = []
+    corroborated = []
+
+    for finding in findings or []:
+        category = (finding.get("category") or "Security finding").strip()
+        detail = (finding.get("detail") or "").strip()
+        severity = (finding.get("severity") or "LOW").strip().upper()
+        item = {"category": category, "detail": detail, "severity": severity}
+
+        lowered = (category + " " + detail).lower()
+        if "external" in lowered or "corroborated" in lowered or "web match" in lowered:
+            corroborated.append(item)
+        elif "web similarity" in lowered or "inferred" in lowered:
+            inferred.append(item)
+        else:
+            observed.append(item)
+
+    landmarks = vision_data.get("landmarks") or []
+    web_entities = vision_data.get("web_entities") or []
+    matching_pages = vision_data.get("matching_pages") or []
+    full_matches = vision_data.get("full_matches") or []
+    partial_matches = vision_data.get("partial_matches") or []
+    similar_images = vision_data.get("similar_images") or []
+    visible_text = (vision_data.get("visible_text") or "").strip()
+
+    match_count = len(matching_pages) + len(full_matches) + len(partial_matches)
+    has_external = bool(match_count)
+    has_location = bool(landmarks)
+
+    # Confidence is evidence-strength, not certainty of identity or exact location.
+    confidence = 20
+    if visible_text:
+        confidence += 15
+    if landmarks:
+        confidence += min(30, max(int(float(x.get("confidence", 0)) * 30) for x in landmarks))
+    if web_entities:
+        confidence += 10
+    if matching_pages:
+        confidence += 15
+    if full_matches:
+        confidence += 20
+    elif partial_matches:
+        confidence += 12
+    elif similar_images:
+        confidence += 5
+    confidence = min(95, confidence)
+
+    if has_location and has_external:
+        location_status = "Potentially identifiable from landmark and public-web evidence"
+    elif has_location:
+        location_status = "Potentially identifiable from a recognised landmark"
+    elif has_external:
+        location_status = "Public web matches found; review them for location clues"
+    elif web_entities or similar_images:
+        location_status = "No location confirmed; contextual OSINT leads were found"
+    else:
+        location_status = "No external location corroboration detected"
+
+    if check["risk"] in ("HIGH", "CRITICAL"):
+        osint_exposure = "High"
+    elif has_external or landmarks:
+        osint_exposure = "Elevated"
+    elif web_entities or similar_images:
+        osint_exposure = "Moderate"
+    else:
+        osint_exposure = "Low"
+
+    return {
+        "observed": observed,
+        "inferred": inferred,
+        "corroborated": corroborated,
+        "visible_text": visible_text,
+        "landmarks": landmarks,
+        "web_entities": web_entities,
+        "matching_pages": matching_pages,
+        "full_matches": full_matches,
+        "partial_matches": partial_matches,
+        "similar_images": similar_images,
+        "confidence": confidence,
+        "location_status": location_status,
+        "osint_exposure": osint_exposure,
+        "has_vision_evidence": bool(
+            visible_text or landmarks or web_entities or matching_pages
+            or full_matches or partial_matches or similar_images
+        ),
+    }
+
+
 SCAN_HISTORY_DETAIL_PAGE = """
 <!doctype html>
 <html lang="en">
@@ -3816,6 +3916,13 @@ a{color:inherit}.main{max-width:1000px;margin:auto;padding:30px 20px}
 .decision{font-size:1.35rem;font-weight:850}
 .safe{color:#7dd3a7}.warn{color:#f6c56f}.danger{color:#ff8c8c}
 .caption{white-space:pre-wrap;overflow-wrap:anywhere}
+.evidence-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.evidence-card{background:#0d1525;border:1px solid #2c3a55;border-radius:12px;padding:15px}
+.evidence-card h3{margin:0 0 8px;font-size:1rem}
+.tag{display:inline-block;border:1px solid #3a4b68;border-radius:999px;padding:4px 8px;margin:3px 4px 3px 0;font-size:.78rem;color:#c9d6e8}
+.osint-link{display:block;color:#9fc0ff;overflow-wrap:anywhere;margin-top:7px}
+.pretext{white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;overflow:auto;background:#08111f;border:1px solid #253754;border-radius:10px;padding:12px}
+@media(max-width:800px){.evidence-grid{grid-template-columns:1fr}}
 @media(max-width:700px){.grid{grid-template-columns:1fr}}
 
 </style>
@@ -3883,6 +3990,89 @@ a{color:inherit}.main{max-width:1000px;margin:auto;padding:30px 20px}
     </div>
     {% endif %}
 </section>
+{% endif %}
+
+{% if vision_report %}
+<section class="card">
+    <h2>Image & OSINT intelligence</h2>
+    <p class="muted">PostGuard separates what was directly observed in the upload, what is inferred from contextual clues, and what is externally corroborated by public-web matches. External matches are leads, not proof of identity or exact location.</p>
+
+    <div class="evidence-grid">
+        <div class="evidence-card">
+            <div class="muted">OSINT exposure</div>
+            <div class="value" style="font-size:1.25rem;font-weight:850;margin-top:6px">{{ vision_report.osint_exposure }}</div>
+        </div>
+        <div class="evidence-card">
+            <div class="muted">Evidence confidence</div>
+            <div class="value" style="font-size:1.25rem;font-weight:850;margin-top:6px">{{ vision_report.confidence }}%</div>
+        </div>
+        <div class="evidence-card">
+            <div class="muted">Location intelligence</div>
+            <div style="font-weight:750;margin-top:6px">{{ vision_report.location_status }}</div>
+        </div>
+    </div>
+</section>
+
+{% if vision_report.observed %}
+<section class="card">
+    <h2>Observed in the image</h2>
+    {% for item in vision_report.observed %}
+    <div class="finding">
+        <strong>{{ item.category }}</strong>
+        <span class="tag">{{ item.severity }}</span>
+        <div style="margin-top:7px">{{ item.detail }}</div>
+    </div>
+    {% endfor %}
+</section>
+{% endif %}
+
+{% if vision_report.inferred or vision_report.landmarks or vision_report.web_entities %}
+<section class="card">
+    <h2>Inferred / contextual OSINT</h2>
+    {% for landmark in vision_report.landmarks %}
+    <div class="finding">
+        <strong>Landmark candidate: {{ landmark.name }}</strong>
+        <div class="muted" style="margin-top:6px">Google Vision confidence: {{ (landmark.confidence * 100)|round|int }}%. Treat this as a location clue, not definitive geolocation.</div>
+    </div>
+    {% endfor %}
+    {% if vision_report.web_entities %}
+    <div class="finding">
+        <strong>Web context</strong>
+        <div style="margin-top:7px">
+        {% for entity in vision_report.web_entities %}
+            <span class="tag">{{ entity.description }}{% if entity.score %} · {{ (entity.score * 100)|round|int }}%{% endif %}</span>
+        {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+    {% for item in vision_report.inferred %}
+    <div class="finding"><strong>{{ item.category }}</strong><div style="margin-top:7px">{{ item.detail }}</div></div>
+    {% endfor %}
+</section>
+{% endif %}
+
+{% if vision_report.corroborated or vision_report.matching_pages or vision_report.full_matches or vision_report.partial_matches %}
+<section class="card">
+    <h2>Externally corroborated / public-web matches</h2>
+    <p class="muted">These sources may contain the same or a related image. Review them as OSINT leads; PostGuard does not claim they prove identity, ownership or exact location.</p>
+    {% for item in vision_report.corroborated %}
+    <div class="finding"><strong>{{ item.category }}</strong><div style="margin-top:7px">{{ item.detail }}</div></div>
+    {% endfor %}
+    {% for url in vision_report.matching_pages %}
+        <a class="osint-link" href="{{ url }}" target="_blank" rel="noopener noreferrer nofollow">Matching public page {{ loop.index }}</a>
+    {% endfor %}
+    {% if vision_report.full_matches %}<div class="muted" style="margin-top:12px">Full image matches: {{ vision_report.full_matches|length }}</div>{% endif %}
+    {% if vision_report.partial_matches %}<div class="muted">Partial image matches: {{ vision_report.partial_matches|length }}</div>{% endif %}
+</section>
+{% endif %}
+
+{% if vision_report.visible_text %}
+<section class="card">
+    <h2>Readable text detected</h2>
+    <p class="muted">Text observed by OCR. Review it for names, schools, addresses, travel details, credentials and other personal information.</p>
+    <div class="pretext">{{ vision_report.visible_text }}</div>
+</section>
+{% endif %}
 {% endif %}
 
 <section class="card">
@@ -3954,11 +4144,14 @@ def scan_history_detail(check_id):
     except (TypeError, ValueError, json.JSONDecodeError):
         findings = []
 
+    vision_report = _vision_report_from_check(check, findings)
+
     return render_template_string(
         SCAN_HISTORY_DETAIL_PAGE,
         check=check,
         findings=findings,
         safer_check=safer_check,
+        vision_report=vision_report,
     )
 
 
@@ -4258,9 +4451,10 @@ def scan():
                     score,
                     risk,
                     findings,
+                    image_analysis,
                     created_at
                 )
-                VALUES(?,?,?,?,?,?,?,?)
+                VALUES(?,?,?,?,?,?,?,?,?)
                 RETURNING id
                 """,
                 (
@@ -4271,6 +4465,7 @@ def scan():
                     score,
                     risk_level,
                     json.dumps(findings),
+                    json.dumps(metadata.get("google_vision", {})),
                     now(),
                 ),
             ).fetchone()
