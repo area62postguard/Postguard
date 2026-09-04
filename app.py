@@ -1607,7 +1607,7 @@ input::placeholder{color:#61748f}
                 <div class="field">
                     <label for="email">Email address</label>
                     <input id="email" name="email" type="email" autocomplete="email"
-                           value="{{ paid_email|default('') }}" placeholder="you@example.com" {% if mode == 'register' and not demo_mode %}readonly{% endif %} required>
+                           value="{{ paid_email|default('') }}" placeholder="you@example.com" {% if mode == 'register' and paid_plan %}readonly{% endif %} required>
                 </div>
 
                 <div class="field">
