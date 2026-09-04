@@ -108,7 +108,7 @@ def add_security_headers(response):
         "media-src 'self'; "
         "object-src 'none'; "
         "base-uri 'self'; "
-        "form-action 'self'; "
+        "form-action 'self' https://checkout.stripe.com; "
         "frame-ancestors 'none'; "
         "upgrade-insecure-requests"
     )
