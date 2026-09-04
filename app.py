@@ -13,6 +13,8 @@ import struct
 import time
 from email.message import EmailMessage
 from urllib.parse import quote
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
 
 import psycopg
 from psycopg.rows import dict_row
@@ -493,46 +495,71 @@ def security_event(event_type, success, user_id=None):
 
 
 def _smtp_configured():
-    return bool(
-        os.getenv("POSTGUARD_SMTP_HOST")
-        and os.getenv("POSTGUARD_EMAIL_FROM")
+    """Compatibility name: transactional email now uses the Resend HTTPS API."""
+    api_key = (
+        os.getenv("POSTGUARD_RESEND_API_KEY", "").strip()
+        or os.getenv("POSTGUARD_SMTP_PASSWORD", "").strip()
     )
+    return bool(api_key and os.getenv("POSTGUARD_EMAIL_FROM", "").strip())
 
 
 def send_email(to_address, subject, text_body):
-    """Send transactional email through operator-configured SMTP."""
-    if not _smtp_configured():
+    """Send transactional email through Resend's HTTPS API.
+
+    POSTGUARD_RESEND_API_KEY is preferred. For a zero-downtime migration from the
+    earlier SMTP configuration, POSTGUARD_SMTP_PASSWORD is accepted as a fallback
+    because it already contains the Resend API key.
+    """
+    api_key = (
+        os.getenv("POSTGUARD_RESEND_API_KEY", "").strip()
+        or os.getenv("POSTGUARD_SMTP_PASSWORD", "").strip()
+    )
+    sender = os.getenv("POSTGUARD_EMAIL_FROM", "").strip()
+
+    if not api_key or not sender:
         app.logger.warning("Transactional email not configured; subject=%s", subject)
         return False
 
-    host = os.getenv("POSTGUARD_SMTP_HOST", "").strip()
-    port = int(os.getenv("POSTGUARD_SMTP_PORT", "587"))
-    username = os.getenv("POSTGUARD_SMTP_USERNAME", "").strip()
-    password = os.getenv("POSTGUARD_SMTP_PASSWORD", "")
-    sender = os.getenv("POSTGUARD_EMAIL_FROM", "").strip()
-    use_ssl = os.getenv("POSTGUARD_SMTP_SSL", "0") == "1"
+    payload = json.dumps({
+        "from": sender,
+        "to": [to_address],
+        "subject": subject,
+        "text": text_body,
+    }).encode("utf-8")
 
-    msg = EmailMessage()
-    msg["From"] = sender
-    msg["To"] = to_address
-    msg["Subject"] = subject
-    msg.set_content(text_body)
+    req = Request(
+        "https://api.resend.com/emails",
+        data=payload,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "PostGuard/7.1",
+        },
+    )
 
-    context = ssl.create_default_context()
-    if use_ssl:
-        with smtplib.SMTP_SSL(host, port, context=context, timeout=15) as server:
-            if username:
-                server.login(username, password)
-            server.send_message(msg)
-    else:
-        with smtplib.SMTP(host, port, timeout=15) as server:
-            server.ehlo()
-            server.starttls(context=context)
-            server.ehlo()
-            if username:
-                server.login(username, password)
-            server.send_message(msg)
-    return True
+    try:
+        with urlopen(req, timeout=15) as response:
+            status = getattr(response, "status", response.getcode())
+            if 200 <= status < 300:
+                return True
+            app.logger.error("Resend API returned HTTP %s", status)
+            return False
+    except HTTPError as exc:
+        # Resend error bodies can help diagnose domain/permission issues, but never
+        # log request headers or the API key.
+        try:
+            detail = exc.read().decode("utf-8", errors="replace")[:1000]
+        except Exception:
+            detail = ""
+        app.logger.error("Resend API HTTP error %s: %s", exc.code, detail)
+        return False
+    except URLError as exc:
+        app.logger.error("Resend API connection error: %s", exc.reason)
+        return False
+    except Exception:
+        app.logger.exception("Unexpected Resend API email failure")
+        return False
 
 
 def create_auth_token(user_id, kind, minutes=30):
