@@ -1176,7 +1176,7 @@ PAID_SPLASH_PAGE = r"""
 <div class="plan {% if key == 'executive' %}featured{% endif %}">{% if key == 'executive' %}<div class="tag">POPULAR</div>{% endif %}<h2>{{ plan.name }}</h2><div class="strap">{{ plan.strap }}</div><div class="price">{{ plan.price }}</div><div class="per">per month · recurring subscription</div><ul class="features">{% for item in plan.features %}<li>{{ item }}</li>{% endfor %}</ul><form method="post" action="{{ url_for('start_checkout', plan_key=key) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="buy" {% if not payments_ready %}disabled{% endif %}>Choose {{ plan.name }}</button></form></div>
 {% endfor %}
 </div>
-<div class="small">PostGuard provides security and privacy decision support. The final decision to publish content remains with the user. Prices are monthly recurring subscriptions. See the <a href="{{ url_for('terms') }}">Terms</a> and <a href="{{ url_for('privacy') }}">Privacy Notice</a>.</div>
+<div class="small">PostGuard provides security and privacy decision support. The final decision to publish content remains with the user. Prices are monthly recurring subscriptions. See the <a href="{{ url_for('terms_page') }}">Terms</a> and <a href="{{ url_for('privacy_page') }}">Privacy Notice</a>.</div>
 </div></body></html>
 """
 
