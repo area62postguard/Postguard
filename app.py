@@ -38,6 +38,7 @@ from flask import (
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from PIL import Image, ExifTags
+from google.cloud import vision
 from flask_wtf.csrf import CSRFProtect
 import qrcode
 
